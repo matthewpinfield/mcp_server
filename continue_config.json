@@ -1,0 +1,96 @@
+{
+  "models": [
+    {
+      "title": "Advanced MCP Server with Memory",
+      "provider": "openai",
+      "model": "qwen3:8b",
+      "apiKey": "dummy-key",
+      "apiBase": "http://localhost:8013/v1",
+      "roles": ["chat", "edit", "apply"]
+    },
+    {
+      "title": "Original MCP Server", 
+      "provider": "openai",
+      "model": "qwen3:8b",
+      "apiKey": "dummy-key", 
+      "apiBase": "http://localhost:8012/v1",
+      "roles": ["chat"]
+    },
+    {
+      "title": "Direct Ollama (Fallback)",
+      "provider": "ollama",
+      "model": "qwen3:8b",
+      "roles": ["autocomplete"]
+    },
+    {
+      "title": "Embeddings Model",
+      "provider": "ollama", 
+      "model": "nomic-embed-text:latest",
+      "roles": ["embed"]
+    }
+  ],
+  "tabAutocompleteModel": {
+    "title": "Ollama Autocomplete",
+    "provider": "ollama",
+    "model": "qwen3:8b"
+  },
+  "embeddingsProvider": {
+    "provider": "ollama",
+    "model": "nomic-embed-text:latest"
+  },
+  "systemMessage": "# CRITICAL OPERATING PRINCIPLES:\n\n1. NEVER modify code or project files without EXPLICIT user permission. Ask first.\n\n2. Before stating facts, especially for versions or APIs, try to verify information using your available tools. If you use a tool, cite it. If you are unsure and have no tool, state that you are answering from your own knowledge.\n\n3. Adhere to project-specific guidelines when provided by the user.\n\n# GENERAL CODING GUIDELINES:\n\n- Prioritize idiomatic code, clarity, performance, and best practices for the language in question.\n- Suggest relevant command-line tools when appropriate (e.g., 'pip install', 'npm run build', 'flutter doctor').\n- When a query is about a specific technology for which you have a specialized documentation tool (like Flutter/Dart), prefer using that tool to provide the most accurate answer.\n\n# ASSISTANT PERSONA:\n\nYou are a highly capable assistant with an incredible knowledge of code and concepts. You are a helpful and collaborative partner in software development. If a user request seems to conflict with the CRITICAL PRINCIPLES, politely state the principle and ask for clarification or explicit permission.",
+  "contextProviders": [
+    {
+      "name": "code",
+      "params": {}
+    },
+    {
+      "name": "docs",
+      "params": {}
+    },
+    {
+      "name": "diff",
+      "params": {}
+    },
+    {
+      "name": "terminal",
+      "params": {}
+    },
+    {
+      "name": "problems",
+      "params": {}
+    },
+    {
+      "name": "folder",
+      "params": {}
+    },
+    {
+      "name": "codebase",
+      "params": {}
+    }
+  ],
+  "docs": [
+    {
+      "title": "Dart Documentation",
+      "startUrl": "https://dart.dev/docs"
+    },
+    {
+      "title": "Flutter Documentation", 
+      "startUrl": "https://docs.flutter.dev"
+    }
+  ],
+  "slashCommands": [
+    {
+      "name": "memory",
+      "description": "Query the advanced memory system for context and history"
+    },
+    {
+      "name": "save",
+      "description": "Save current conversation to memory with tags"
+    },
+    {
+      "name": "stats", 
+      "description": "Show memory system statistics"
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+name: mcp_dart_parser_helper
+description: A helper Dart script to parse Dart files using the analyzer for the MCP project.
+version: 0.0.1
+# repository: https://github.com/my_org/my_repo
+
+environment:
+  sdk: '>=3.0.0 <4.0.0' # Compatible with your Dart 3.8.0
+
+dependencies:
+  analyzer: ^6.4.1 # Or check pub.dev for the latest compatible version
+
+# dev_dependencies:
+#   lints: ^3.0.0
+#   test: ^1.24.0
