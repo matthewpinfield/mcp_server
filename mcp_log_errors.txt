@@ -1,0 +1,150 @@
+matthewpinfield@matthewpinfield-System-Product-Name:~$ cd /mnt/caseSSD/mcp_server_project
+source .venv/bin/activate
+python3 -m advanced_mcp_server
+INFO:__main__:Default Model: qwen3:8b
+INFO:__main__:RAG Keywords for Langchain Agent: ['flutter', 'dart', 'widget', 'state management', 'navigation', 'routing', 'buildrunner', 'firebase', 'api', 'documentation', 'code example', 'debug', 'error', 'fix', 'how to', 'what is', 'explain']
+INFO:__main__:🧠 Advanced MCP Server with Memory System starting...
+INFO:mcp_memory:✅ Redis connection established
+INFO:mcp_memory:✅ MongoDB connection established
+INFO:chromadb.telemetry.product.posthog:Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+INFO:sentence_transformers.SentenceTransformer:Load pretrained SentenceTransformer: all-MiniLM-L6-v2
+INFO:mcp_memory:✅ ChromaDB initialized with 51 memories
+INFO:mcp_memory:✅ All database connections initialized successfully
+Batches: 100%|███████████████████████████████████| 1/1 [00:00<00:00, 122.75it/s]
+INFO:mcp_memory:✅ Context retrieved: 56 recent, 5 semantic
+INFO:__main__:🚀 Starting Advanced MCP Server with Memory on http://0.0.0.0:8013
+INFO:     Started server process [1291085]
+INFO:     Waiting for application startup.
+INFO:__main__:Advanced MCP Server with Memory starting up...
+INFO:__main__:🧠 Memory system initialized successfully
+INFO:__main__:Advanced MCP Server started successfully.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8013 (Press CTRL+C to quit)
+INFO:__main__:🔄 Chat Request: Model='qwen3:8b', Msgs=2
+INFO:__main__:🧠 Orchestrator Decision: Memory=False, RAG=False, WebSearch=False, Git=False, GitHub=False, DevWorkflow=False, RepoAnalysis=False, AutoLinter=False, Agent=False
+INFO:__main__:💬 Chat Path: No special tools needed. Using Direct Ollama path with model 'qwen3:8b'.
+INFO:     127.0.0.1:46742 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+INFO:__main__:💬 Direct Path (chatcmpl-direct-1749658509): Streaming from Ollama model 'qwen3:8b'. API: http://localhost:11434/v1/chat/completions
+INFO:httpx:HTTP Request: POST http://localhost:11434/v1/chat/completions "HTTP/1.1 200 OK"
+INFO:__main__:🏷️ Layer 1 Context-Aware Tags: {'user_level': 'intermediate', 'conversation_depth': '2', 'session_duration': '70', 'complexity': 'low'}
+INFO:__main__:📊 Session Context: domain=None, task=None, level=intermediate
+Batches: 100%|████████████████████████████████████| 1/1 [00:00<00:00, 42.11it/s]
+INFO:mcp_memory:✅ Interaction saved: interaction_1749658514.324234
+INFO:__main__:💾 Direct conversation saved to memory: interaction_1749658514.324234
+INFO:__main__:Direct Path (chatcmpl-direct-1749658509): Streamed 11 direct chunks. Sent DONE.
+INFO:__main__:🔄 Chat Request: Model='qwen3:8b', Msgs=1
+INFO:__main__:📝 Orchestrator Decision: Title generation request detected - routing to direct path
+INFO:__main__:💬 Chat Path: No special tools needed. Using Direct Ollama path with model 'qwen3:8b'.
+INFO:     127.0.0.1:45234 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+INFO:__main__:💬 Direct Path (chatcmpl-direct-1749658514): Streaming from Ollama model 'qwen3:8b'. API: http://localhost:11434/v1/chat/completions
+INFO:httpx:HTTP Request: POST http://localhost:11434/v1/chat/completions "HTTP/1.1 200 OK"
+INFO:__main__:📝 Skipping memory save for title generation request
+INFO:__main__:Direct Path (chatcmpl-direct-1749658514): Streamed 4 direct chunks. Sent DONE.
+INFO:__main__:🔄 Chat Request: Model='qwen3:8b', Msgs=4
+INFO:__main__:🧠 Orchestrator Decision: Memory=False, RAG=True, WebSearch=False, Git=False, GitHub=False, DevWorkflow=False, RepoAnalysis=False, AutoLinter=False, Agent=True
+INFO:__main__:🤖 Chat Path: Using Langchain Agent with selected tools.
+/mnt/caseSSD/mcp_server_project/advanced_mcp_server.py:4509: LangChainDeprecationWarning: The class `ChatOllama` was deprecated in LangChain 0.3.1 and will be removed in 1.0.0. An updated version of the class exists in the :class:`~langchain-ollama package and should be used instead. To use it run `pip install -U :class:`~langchain-ollama` and import as `from :class:`~langchain_ollama import ChatOllama``.
+  llm = ChatOllama(
+INFO:__main__:📚 Added RAG tool to agent
+/mnt/caseSSD/mcp_server_project/.venv/lib/python3.12/site-packages/langsmith/client.py:272: LangSmithMissingAPIKeyWarning: API key must be provided when using hosted LangSmith API
+  warnings.warn(
+INFO:mcp_memory:✅ Context retrieved: 57 recent, 0 semantic
+INFO:__main__:🧠 Enhanced prompt with memory context: 2 sections
+INFO:     127.0.0.1:41076 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+INFO:__main__:🏷️ Layer 1 Context-Aware Tags: {'task': 'explanation', 'concept': 'ui_components', 'user_level': 'intermediate', 'conversation_depth': '4', 'session_duration': '87', 'complexity': 'low'}
+INFO:__main__:📊 Session Context: domain=None, task=None, level=intermediate
+INFO:__main__:🤖 Invoking ReAct agent for query: 'what is my favourit fruit?'
+
+
+> Entering new AgentExecutor chain...
+<think>
+Okay, the user is asking "what is my favourit fruit?" I need to check the memory context provided.
+
+Looking at the recent context, the user mentioned blueberries as their favorite fruit in a previous conversation. The assistant saved that information. So even though the user is asking now, the memory system should recall that blueberries are their favorite. 
+
+I should confirm that the assistant's memory has stored this correctly. The user also emphasized detailed explanations, so the answer should mention that blueberries are their favorite based on past interactions. No need to use any tools here since the information is already in the memory context.
+</think>
+
+Final Answer: Based on our previous conversation, your favorite fruit is blueberries! 🫐 I'm glad to recall that for you. Let me know if you'd like to discuss anything else about fruits or need further details!
+
+> Finished chain.
+INFO:__main__:🤖 ReAct agent finished. Final Answer length: 195
+Batches: 100%|████████████████████████████████████| 1/1 [00:00<00:00, 43.85it/s]
+INFO:mcp_memory:✅ Interaction saved: interaction_1749658533.875463
+INFO:__main__:💾 Interaction saved to memory: interaction_1749658533.875463
+INFO:__main__:🔄 Chat Request: Model='qwen3:8b', Msgs=6
+INFO:__main__:🧠 Orchestrator Decision: Memory=True, RAG=False, WebSearch=False, Git=False, GitHub=False, DevWorkflow=False, RepoAnalysis=False, AutoLinter=False, Agent=True
+INFO:__main__:🤖 Chat Path: Using Langchain Agent with selected tools.
+INFO:__main__:🧠 Added memory tools to agent
+/mnt/caseSSD/mcp_server_project/.venv/lib/python3.12/site-packages/langsmith/client.py:272: LangSmithMissingAPIKeyWarning: API key must be provided when using hosted LangSmith API
+  warnings.warn(
+INFO:mcp_memory:✅ Context retrieved: 58 recent, 0 semantic
+INFO:__main__:🧠 Enhanced prompt with memory context: 2 sections
+INFO:     127.0.0.1:36486 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+INFO:__main__:🏷️ Layer 1 Context-Aware Tags: {'concept': 'performance', 'user_level': 'intermediate', 'conversation_depth': '6', 'session_duration': '142', 'interaction_type': 'follow_up', 'complexity': 'medium'}
+INFO:__main__:📊 Session Context: domain=None, task=None, level=intermediate
+INFO:__main__:🤖 Invoking ReAct agent for query: 'shared memory across apps amazing : ) i use you in both Open WebUi and Continue within VScode'
+
+
+> Entering new AgentExecutor chain...
+<think>
+Okay, let's see. The user mentioned using me in both Open WebUi and Continue in VScode. They also shared that they have a preference for detailed explanations, which is stored in the memory system. The recent context shows that the user likes blueberries as their favorite fruit.
+
+First, I need to acknowledge their usage across different platforms. The user seems happy with the memory system, so I should respond positively. Since they prefer detailed explanations, my response should be thorough but not too technical. I should mention the platforms they use and maybe offer assistance related to those environments. Also, since blueberries are their favorite, I could include a friendly note about that. Let me check if there's any other info from the memory context I should use. The rules are repeated, so maybe just focus on the preference for detailed explanations. Alright, time to craft a response that's friendly, acknowledges their setup, and offers help with detailed explanations as per their preference.
+</think>
+
+Thought: The user has a clear preference for detailed explanations and enjoys using me across different platforms. I should acknowledge their setup, offer assistance, and ensure my response aligns with their preference for thoroughness.  
+Action: save_interaction_to_memory  
+Action Input: [{"role": "user", "content": "shared memory across apps amazing : ) i use you in both Open WebUi and Continue within VScode"}, {"role": "assistant", "content": "I’m glad to help across your platforms! 🫐 Whether you’re in Open WebUI or VSCode, I’ll provide detailed explanations as per your preference. Let me know if you need assistance with code, concepts, or anything else! (P.S. Blueberries are your favorite fruit—yum! 🍓)"}]  ERROR:__main__:🤖 Langchain Agent Path Streaming (chatcmpl-agent-1749658585): Error during agent execution: 1 validation error for MemorySaveSchema
+messages
+  Input should be a valid list [type=list_type, input_value='[{"role": "user", "conte...e fruit—yum! 🍓)"}]', input_type=str]
+    For further information visit https://errors.pydantic.dev/2.11/v/list_type
+Traceback (most recent call last):
+  File "/mnt/caseSSD/mcp_server_project/advanced_mcp_server.py", line 4316, in stream_langchain_agent_response
+    result = await agent_executor_instance.ainvoke(agent_input_data)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/caseSSD/mcp_server_project/.venv/lib/python3.12/site-packages/langchain/chains/base.py", line 218, in ainvoke
+    raise e
+  File "/mnt/caseSSD/mcp_server_project/.venv/lib/python3.12/site-packages/langchain/chains/base.py", line 209, in ainvoke
+    await self._acall(inputs, run_manager=run_manager)
+  File "/mnt/caseSSD/mcp_server_project/.venv/lib/python3.12/site-packages/langchain/agents/agent.py", line 1669, in _acall
+    next_step_output = await self._atake_next_step(
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/caseSSD/mcp_server_project/.venv/lib/python3.12/site-packages/langchain/agents/agent.py", line 1463, in _atake_next_step
+    [
+  File "/mnt/caseSSD/mcp_server_project/.venv/lib/python3.12/site-packages/langchain/agents/agent.py", line 1547, in _aiter_next_step
+    result = await asyncio.gather(
+             ^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/caseSSD/mcp_server_project/.venv/lib/python3.12/site-packages/langchain/agents/agent.py", line 1580, in _aperform_agent_action
+    observation = await tool.arun(
+                  ^^^^^^^^^^^^^^^^
+  File "/mnt/caseSSD/mcp_server_project/.venv/lib/python3.12/site-packages/langchain_core/tools/base.py", line 884, in arun
+    raise error_to_raise
+  File "/mnt/caseSSD/mcp_server_project/.venv/lib/python3.12/site-packages/langchain_core/tools/base.py", line 841, in arun
+    tool_args, tool_kwargs = self._to_args_and_kwargs(tool_input, tool_call_id)
+                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/caseSSD/mcp_server_project/.venv/lib/python3.12/site-packages/langchain_core/tools/base.py", line 648, in _to_args_and_kwargs
+    tool_input = self._parse_input(tool_input, tool_call_id)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/mnt/caseSSD/mcp_server_project/.venv/lib/python3.12/site-packages/langchain_core/tools/base.py", line 544, in _parse_input
+    input_args.model_validate({key_: tool_input})
+  File "/mnt/caseSSD/mcp_server_project/.venv/lib/python3.12/site-packages/pydantic/main.py", line 705, in model_validate
+    return cls.__pydantic_validator__.validate_python(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+pydantic_core._pydantic_core.ValidationError: 1 validation error for MemorySaveSchema
+messages
+  Input should be a valid list [type=list_type, input_value='[{"role": "user", "conte...e fruit—yum! 🍓)"}]', input_type=str]
+    For further information visit https://errors.pydantic.dev/2.11/v/list_type
+
+
+another incident of it:
+
+prompt: what is my favourit fruit?
+response: Based on our previous conversation, your favorite fruit is blueberries! 🫐 I'm glad to recall that for you. Let me know if you'd like to discuss anything else about fruits or need further details!
+prompt: shared memory across apps amazing : ) i use you in both Open WebUi and Continue within VScode
+response: 
+
+[Agent Error: 1 validation error for MemorySaveSchema messages Input should be a valid list [type=list_type, input_value='[{"role": "user", "conte...e fruit—yum! 🍓)"}]', input_type=str] For further information visit https://errors.pydantic.dev/2.11/v/list_type]
+
+prompt: explain painter in flutter
+response: In Flutter, a Painter is a class responsible for drawing custom content onto a Canvas, which is part of the framework's rendering pipeline. Here's a structured explanation: 1. Role of a Painter: A Painter (e.g., PicturePainter or custom subclasses) draws onto a Canvas to produce visual output. It is central to the CustomPaint widget, which allows developers to render custom graphics (e.g., shapes, animations) by subclassing Painter. 2. Canvas and PictureRecorder: - The Canvas is used to record graphical operations (e.g., drawing lines, text) into a Picture. - A PictureRecorder captures these operations into a Picture, which is then rendered to a texture. This texture is part of the Flutter engine's rendering pipeline. 3. Picture and Rendering: - A Picture is a rendered image that can be displayed. The Flutter engine composites these pictures into the final UI. - When creating a Canvas for use with a PictureLayer, RendererBinding.createCanvas is recommended for performance and framework integration. 4. Integration with Widgets: - Widgets like Container or DecoratedBox use painters internally to render their content. - CustomPaint allows developers to replace the default painter with a custom one, enabling advanced custom drawing (e.g., custom animations, SVG rendering). 5. Example: dart CustomPaint( painter: MyCustomPainter(), // Custom subclass of Painter ) A MyCustomPainter might draw shapes using a Canvas: dart class MyCustomPainter extends CustomPainter { @override void paint(Canvas canvas, Size size) { canvas.drawCircle(Offset(size.width/2, size.height/2), 50, Paint()); } @override bool shouldRepaint(covariant CustomPainter oldDelegate) => false; } Key Takeaway: Painters enable custom rendering in Flutter by bridging the gap between the widget tree and the Skia graphics engine, allowing developers to create visually rich, dynamic UIs.

@@ -64,6 +64,7 @@ class MemorySystem:
     """
     
     def __init__(self):
+        self.user = DEFAULT_USER
         self.redis_client = None
         self.mongo_client = None
         self.mongo_db = None
@@ -249,6 +250,53 @@ class MemorySystem:
             logger.error(f"❌ Failed to save interaction: {e}")
             return {"status": "error", "error": str(e)}
     
+    def get_key_value(self, key: str) -> Any:
+        """
+        Get a specific key-value pair from profile data (MongoDB)
+        
+        Args:
+            key: The key to retrieve
+            
+        Returns:
+            The value associated with the key, or None if not found
+        """
+        try:
+            if self.mongo_db is None:
+                return None
+                
+            profile = self.mongo_db.profiles.find_one({"user": self.user})
+            if profile and key in profile:
+                return profile[key]
+            return None
+        except Exception as e:
+            logger.error(f"❌ Failed to get key {key}: {e}")
+            return None
+
+    def set_key_value(self, key: str, value: Any) -> Dict:
+        """
+        Set a specific key-value pair in profile data (MongoDB)
+        
+        Args:
+            key: The key to set
+            value: The value to store
+            
+        Returns:
+            Dict with operation status
+        """
+        try:
+            if self.mongo_db is None:
+                return {"status": "error", "error": "MongoDB unavailable"}
+                
+            result = self.mongo_db.profiles.update_one(
+                {"user": self.user},
+                {"$set": {key: value, "updated_at": datetime.now()}},
+                upsert=True
+            )
+            return {"status": "success", "key": key, "modified": result.modified_count}
+        except Exception as e:
+            logger.error(f"❌ Failed to set key {key}: {e}")
+            return {"status": "error", "error": str(e)}
+
     def get_context(self, query: Optional[str] = None, include_long_term: bool = True) -> Dict:
         """
         Core memory read operation - retrieves context from all 3 tiers
@@ -321,6 +369,74 @@ class MemorySystem:
         except Exception as e:
             logger.error(f"❌ Failed to add rule: {e}")
             return {"status": "error", "error": str(e)}
+    
+    def add_correction(self, ai_response: str, user_correction: str, topic: str = None) -> Dict:
+        """
+        Store AI correction for learning from mistakes
+        
+        Args:
+            ai_response: The incorrect AI response
+            user_correction: The user's correction
+            topic: Optional topic/category for the correction
+            
+        Returns:
+            Dict with operation status
+        """
+        if self.mongo_db is None:
+            return {"status": "error", "error": "MongoDB unavailable"}
+            
+        try:
+            correction_data = {
+                "ai_response": ai_response,
+                "user_correction": user_correction,
+                "topic": topic or "general",
+                "created_at": datetime.now(),
+                "user_id": self.user,
+                "id": hashlib.md5(f"{ai_response}{user_correction}".encode()).hexdigest()[:8]
+            }
+            
+            # Store in correction_logs collection
+            result = self.mongo_db.correction_logs.insert_one(correction_data)
+            
+            if result.inserted_id:
+                logger.info(f"✅ Correction stored: {correction_data['id']}")
+                return {"status": "success", "correction_id": correction_data["id"]}
+            else:
+                return {"status": "error", "error": "Failed to insert correction"}
+                
+        except Exception as e:
+            logger.error(f"❌ Failed to add correction: {e}")
+            return {"status": "error", "error": str(e)}
+    
+    def get_corrections(self, topic: str = None, limit: int = 5) -> List[Dict]:
+        """
+        Retrieve relevant corrections for prompt injection
+        
+        Args:
+            topic: Optional topic to filter corrections
+            limit: Maximum number of corrections to return
+            
+        Returns:
+            List of correction dictionaries
+        """
+        if self.mongo_db is None:
+            return []
+            
+        try:
+            query = {"user_id": self.user}
+            if topic:
+                query["topic"] = topic
+                
+            corrections = list(self.mongo_db.correction_logs.find(
+                query,
+                {"_id": 0, "ai_response": 1, "user_correction": 1, "topic": 1, "created_at": 1}
+            ).sort("created_at", -1).limit(limit))
+            
+            return corrections
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to get corrections: {e}")
+            return []
     
     def get_memory_stats(self) -> Dict:
         """
@@ -486,6 +602,22 @@ def mcp_add_permanent_rule(rule: str, category: str = "general") -> Dict:
 def mcp_get_memory_stats() -> Dict:
     """MCP Tool: Get memory system diagnostics"""
     return get_memory_system().get_memory_stats()
+
+def mcp_get_key_value(key: str) -> Any:
+    """MCP Tool: Get a specific key from profile data"""
+    return get_memory_system().get_key_value(key)
+
+def mcp_set_key_value(key: str, value: Any) -> Dict:
+    """MCP Tool: Set a specific key in profile data"""
+    return get_memory_system().set_key_value(key, value)
+
+def mcp_add_correction(ai_response: str, user_correction: str, topic: str = None) -> Dict:
+    """MCP Tool: Store AI correction for learning from mistakes"""
+    return get_memory_system().add_correction(ai_response, user_correction, topic)
+
+def mcp_get_corrections(topic: str = None, limit: int = 5) -> List[Dict]:
+    """MCP Tool: Retrieve relevant corrections for prompt injection"""
+    return get_memory_system().get_corrections(topic, limit)
 
 
 if __name__ == "__main__":

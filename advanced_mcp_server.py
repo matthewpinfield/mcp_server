@@ -45,11 +45,35 @@ from mcp_memory import (
     mcp_get_context, 
     mcp_save_interaction, 
     mcp_add_permanent_rule, 
-    mcp_get_memory_stats
+    mcp_get_memory_stats,
+    mcp_get_key_value,
+    mcp_set_key_value,
+    mcp_add_correction,
+    mcp_get_corrections
 )
 
-# Import for web search
-from duckduckgo_search import DDGS
+# Import our sandbox system
+from mcp_sandbox import execute_code, get_sandbox_stats, debug_code, test_code
+
+# Memory wrapper function for backward compatibility
+def mcp_get_memory_context(key_or_query: str) -> Any:
+    """Wrapper function to get memory context - handles both key lookups and queries"""
+    try:
+        # First try as a key lookup for custom commands, project info, etc.
+        if key_or_query in ["custom_slash_commands", "current_project", "workspace_settings"]:
+            return mcp_get_key_value(key_or_query)
+        
+        # Otherwise treat as a semantic query
+        result = mcp_get_context(key_or_query, include_long_term=True)
+        return result
+    except Exception as e:
+        return f"Memory error: {str(e)}"
+
+# Import for web search and content scraping
+import requests
+from bs4 import BeautifulSoup
+from urllib.parse import urljoin, urlparse
+import re
 
 # Import for Git operations
 import subprocess
@@ -99,6 +123,10 @@ BUILD_COMMAND_KEYWORDS = ["build", "test", "lint", "format", "deploy", "ci", "cd
 # Auto-linter configuration
 AUTO_LINTER_KEYWORDS = ["lint", "analyze code", "flutter analyze", "dart fix", "eslint", "prettier", "auto fix", "format code", "code quality", "style check"]
 
+# Sandbox configuration
+SANDBOX_KEYWORDS = ["run code", "execute", "test code", "debug", "verify", "check output", "sandbox", "python", "calculate", "what does this code do", "run this", "execute this"]
+CALCULATION_KEYWORDS = ["calculate", "compute", "math", "mathematics", "solve", "equation", "formula", "sum", "average", "statistics"]
+
 # Slash commands configuration
 DEFAULT_SLASH_COMMANDS = {
     # Memory Management
@@ -136,6 +164,20 @@ DEFAULT_SLASH_COMMANDS = {
         "example": "/stats",
         "category": "memory",
         "action": "get_stats"
+    },
+    "/correct": {
+        "description": "Correct the AI's last response for future learning",
+        "usage": "/correct <correction_text>",
+        "example": "/correct Actually, use async/await instead of .then()",
+        "category": "memory",
+        "action": "correct"
+    },
+    "/fix": {
+        "description": "Fix the AI's last response (alias for /correct)",
+        "usage": "/fix <correction_text>", 
+        "example": "/fix The correct syntax is setState(() => ...)",
+        "category": "memory",
+        "action": "fix"
     },
     
     # Development Workflow
@@ -238,33 +280,46 @@ DEFAULT_SLASH_COMMANDS = {
     }
 }
 
+# Google Custom Search API configuration
+GOOGLE_API_KEY = "***REMOVED-GOOGLE-API-KEY***"
+GOOGLE_SEARCH_ENGINE_ID = "948e280aa8f4544c5"  # From your CSE script
+
 # GitHub API configuration
 GITHUB_API_BASE = "https://api.github.com"
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN", None)  # Optional GitHub token for higher rate limits
 GITHUB_SEARCH_MAX_RESULTS = 10
 
-# Domain prioritization for reputable sources
+# Domain prioritization for reputable sources - REFINED FOR HIGHEST QUALITY
 PRIORITY_DOMAINS = {
-    # Official documentation sites (highest priority)
+    # Tier 1: Official Documentation & Style Guides (The Source of Truth)
     "tier_1_official": [
-        "docs.flutter.dev", "flutter.dev", "dart.dev",
-        "docs.python.org", "python.org", 
-        "developer.mozilla.org", "nodejs.org",
-        "reactjs.org", "vuejs.org", "angular.dev",
-        "docs.microsoft.com", "developer.apple.com",
-        "developers.google.com", "aws.amazon.com",
-        "kubernetes.io", "docker.com"
+        "docs.flutter.dev", "flutter.dev", "dart.dev", "api.flutter.dev", "api.dart.dev",
+        "docs.python.org", "python.org", "peps.python.org",
+        "developer.mozilla.org", "nodejs.org", "web.dev",
+        "react.dev", "reactjs.org", "vuejs.org", "angular.dev", "svelte.dev",
+        "docs.microsoft.com", "developer.apple.com", "developers.google.com",
+        "aws.amazon.com", "cloud.google.com", "azure.microsoft.com",
+        "kubernetes.io", "docker.com", "golang.org", "rust-lang.org",
+        "typescriptlang.org", "postgresql.org", "mongodb.com/docs"
     ],
-    # Trusted development communities (medium-high priority)
-    "tier_2_community": [
-        "stackoverflow.com", "github.com",
-        "medium.com", "dev.to", "hashnode.com",
-        "freecodecamp.org", "codecademy.com"
+    # Tier 2: Curated Educational Platforms & Expert Blogs (High-Quality Learning)
+    "tier_2_educational": [
+        "freecodecamp.org", "realpython.com", "digitalocean.com",
+        "web.dev", "smashingmagazine.com", "martinfowler.com",
+        "css-tricks.com", "a11yproject.com", "webhint.io"
     ],
-    # News and update sites (medium priority)
-    "tier_3_news": [
+    # Tier 3: Reputable Q&A and Official Repositories (High-Quality Community Content)
+    "tier_3_community": [
+        "stackoverflow.com", "github.com"  # Will add quality filters
+    ],
+    # Tier 4: General Tech Blogs (Variable Quality - Use with Caution)
+    "tier_4_blogs": [
+        "medium.com", "dev.to", "hashnode.com", "codecademy.com"
+    ],
+    # Tier 5: News & Updates (For Current Events Only)
+    "tier_5_news": [
         "techcrunch.com", "arstechnica.com", "theverge.com",
-        "9to5google.com", "androidcentral.com"
+        "9to5google.com", "androidcentral.com", "engadget.com"
     ]
 }
 
@@ -339,8 +394,15 @@ class MemoryRuleSchema(BaseModel):
     category: str = Field(description="Category like 'preference', 'coding_style', 'communication', etc.", default="preference")
 
 class WebSearchSchema(BaseModel):
-    query: str = Field(description="Search query for DuckDuckGo web search. Be specific and include relevant keywords.")
+    query: str = Field(description="Search query for web search using Google/Bing. Be specific and include relevant keywords.")
     max_results: int = Field(description="Maximum number of search results to return", default=5)
+
+class SandboxExecuteSchema(BaseModel):
+    code: str = Field(description="Python code to execute in the secure sandbox environment. Must be valid Python syntax.")
+
+class SandboxDebugSchema(BaseModel):
+    code: str = Field(description="Python code to debug in the sandbox with detailed execution analysis.")
+    expected_output: Optional[str] = Field(description="Expected output for comparison", default=None)
 
 class LangchainMemoryContextTool(LangchainBaseTool):
     name: str = "get_memory_context"
@@ -397,6 +459,11 @@ class LangchainMemorySaveTool(LangchainBaseTool):
     def _run(self, messages: List[Dict[str, str]], tags: Optional[Dict[str, str]] = None) -> str:
         logger.info(f"🧠 Memory Save Tool: {len(messages)} messages, tags={tags}")
         try:
+            # Handle case where LangChain passes JSON string instead of parsed list
+            if isinstance(messages, str):
+                import json
+                messages = json.loads(messages)
+            
             result = mcp_save_interaction(messages, tags)
             if result["status"] == "success":
                 return f"Interaction saved successfully: {result['interaction_id']}\nStored in: {', '.join([k for k, v in result['results'].items() if v != 'unavailable'])}"
@@ -409,6 +476,12 @@ class LangchainMemorySaveTool(LangchainBaseTool):
     async def _arun(self, messages: List[Dict[str, str]], tags: Optional[Dict[str, str]] = None) -> str:
         global executor
         if not executor: return "Error: Server config issue (executor missing)."
+        
+        # Handle case where LangChain passes JSON string instead of parsed list
+        if isinstance(messages, str):
+            import json
+            messages = json.loads(messages)
+            
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(executor, self._run, messages, tags)
 
@@ -464,62 +537,299 @@ class LangchainMemoryStatsTool(LangchainBaseTool):
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(executor, self._run)
 
+# ===== SANDBOX TOOLS =====
+
+class LangchainSandboxExecuteTool(LangchainBaseTool):
+    name: str = "execute_python_sandbox"
+    description: str = (
+        "Executes Python code in a secure, isolated sandbox environment. "
+        "Use this tool to test code snippets, debug errors, verify logic, perform calculations, or answer 'what does this code do?' questions. "
+        "The code must be valid Python syntax. Returns stdout, stderr, and execution status. "
+        "IMPORTANT: Use this tool to verify any complex code before presenting it as a final answer."
+    )
+    args_schema: Type[BaseModel] = SandboxExecuteSchema
+
+    def _run(self, code: str) -> str:
+        logger.info(f"🔒 Sandbox Execute Tool: Executing code in sandbox")
+        try:
+            result = execute_code(code)
+            
+            # Format result for LLM consumption
+            output_parts = []
+            
+            if result['success']:
+                output_parts.append("✅ Code executed successfully")
+                if result['stdout']:
+                    output_parts.append(f"Output:\n{result['stdout']}")
+                if result['stderr']:
+                    output_parts.append(f"Warnings/Info:\n{result['stderr']}")
+            else:
+                output_parts.append("❌ Code execution failed")
+                if result['stderr']:
+                    output_parts.append(f"Error:\n{result['stderr']}")
+                if result['stdout']:
+                    output_parts.append(f"Partial Output:\n{result['stdout']}")
+            
+            output_parts.append(f"Execution time: {result['execution_time']:.2f}s")
+            output_parts.append(f"Method: {result['method']}")
+            
+            if result.get('validation', {}).get('warnings'):
+                output_parts.append(f"Validation warnings: {'; '.join(result['validation']['warnings'])}")
+            
+            return "\n\n".join(output_parts)
+            
+        except Exception as e:
+            logger.error(f"❌ Sandbox Execute Tool error: {e}")
+            return f"Sandbox execution error: {str(e)}"
+
+    async def _arun(self, code: str) -> str:
+        global executor
+        if not executor: return "Error: Server config issue (executor missing)."
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(executor, self._run, code)
+
+class LangchainSandboxDebugTool(LangchainBaseTool):
+    name: str = "debug_python_sandbox"
+    description: str = (
+        "Debug Python code in sandbox with detailed analysis and optional expected output comparison. "
+        "Use this when you need comprehensive debugging information, performance analysis, or to compare actual vs expected output. "
+        "Provides detailed execution report including timing, return codes, and validation warnings."
+    )
+    args_schema: Type[BaseModel] = SandboxDebugSchema
+
+    def _run(self, code: str, expected_output: Optional[str] = None) -> str:
+        logger.info(f"🔒 Sandbox Debug Tool: Debugging code in sandbox")
+        try:
+            result = debug_code(code, expected_output)
+            return result
+        except Exception as e:
+            logger.error(f"❌ Sandbox Debug Tool error: {e}")
+            return f"Sandbox debug error: {str(e)}"
+
+    async def _arun(self, code: str, expected_output: Optional[str] = None) -> str:
+        global executor
+        if not executor: return "Error: Server config issue (executor missing)."
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(executor, self._run, code, expected_output)
+
+class LangchainSandboxStatsTool(LangchainBaseTool):
+    name: str = "get_sandbox_stats"
+    description: str = "Gets diagnostic information about the sandbox system status, configuration, and health."
+    args_schema: Type[BaseModel] = BaseModel
+
+    def _run(self) -> str:
+        logger.info("🔒 Sandbox Stats Tool called")
+        try:
+            result = get_sandbox_stats()
+            if result["status"] == "success":
+                stats = result["stats"]
+                summary = "Sandbox System Statistics:\n"
+                summary += f"• Available: {stats['sandbox_available']}\n"
+                summary += f"• Subprocess support: {stats['subprocess_available']}\n"
+                summary += f"• Timeout: {stats['timeout_seconds']}s\n"
+                summary += f"• Max output size: {stats['max_output_size']} chars\n"
+                summary += f"• Max memory: {stats['max_memory_mb']} MB\n"
+                summary += f"• Test execution: {'✅' if stats['test_execution'] else '❌'}\n"
+                summary += f"• Base directory: {stats['base_directory']}\n"
+                summary += f"• Security: {stats['allowed_imports_count']} allowed, {stats['blocked_imports_count']} blocked imports"
+                return summary
+            else:
+                return f"Failed to get sandbox stats: {result.get('error', 'Unknown error')}"
+        except Exception as e:
+            logger.error(f"❌ Sandbox Stats Tool error: {e}")
+            return f"Sandbox stats error: {str(e)}"
+
+    async def _arun(self) -> str:
+        global executor
+        if not executor: return "Error: Server config issue (executor missing)."
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(executor, self._run)
+
 # ===== WEB SEARCH TOOL =====
 
 class LangchainWebSearchTool(LangchainBaseTool):
     name: str = "search_web"
-    description: str = "Searches the web using DuckDuckGo for current information, news, or topics not covered in documentation. Use for recent events, current prices, latest news, or information beyond training data."
+    description: str = (
+        "Searches the web and returns HIGH-QUALITY, AUTHORITATIVE content from trusted sources. "
+        "Prioritizes official documentation, expert educational content, and reputable community sources. "
+        "Returns actual scraped content, not just search result summaries. "
+        "Use for: current information, latest versions, authoritative guides, official best practices."
+    )
     args_schema: Type[BaseModel] = WebSearchSchema
 
-    def _run(self, query: str, max_results: int = 5) -> str:
-        logger.info(f"🔍 Web Search Tool: query='{query}', max_results={max_results}")
+    def _run(self, query: str, max_results: int = 3) -> str:
+        logger.info(f"🔍 High-Quality Web Search: query='{query}', max_results={max_results}")
         try:
-            # Limit max_results to prevent abuse, but search for more to allow filtering
-            max_results = min(max_results, WEB_SEARCH_MAX_RESULTS)
-            search_limit = max_results * 3  # Search more to allow domain prioritization
+            # Get initial search results
+            search_results = self._get_search_results(query, max_results * 3)
             
-            with DDGS() as ddgs:
-                raw_results = list(ddgs.text(query, max_results=search_limit))
-            
-            if not raw_results:
+            if not search_results:
                 return f"No search results found for query: '{query}'"
             
-            # Prioritize results by domain reputation
-            prioritized_results = self._prioritize_by_domain(raw_results, query)
+            # Find highest quality source using tiered approach
+            best_content = self._find_and_scrape_best_source(search_results, query)
             
-            # Take only the requested number of results after prioritization
-            final_results = prioritized_results[:max_results]
-            
-            # Format results for the LLM
-            formatted_results = []
-            for i, result in enumerate(final_results, 1):
-                title = result.get('title', 'No title')
-                body = result.get('body', 'No description')
-                href = result.get('href', 'No URL')
-                domain_tier = result.get('_domain_tier', 'other')
-                
-                # Add domain trust indicator
-                trust_indicator = ""
-                if domain_tier == "tier_1_official":
-                    trust_indicator = " 🏛️ [Official Docs]"
-                elif domain_tier == "tier_2_community":
-                    trust_indicator = " 👥 [Community]"
-                elif domain_tier == "tier_3_news":
-                    trust_indicator = " 📰 [News]"
-                
-                formatted_results.append(
-                    f"{i}. **{title}**{trust_indicator}\n"
-                    f"   {body}\n"
-                    f"   URL: {href}\n"
-                )
-            
-            search_summary = f"Web search results for '{query}' (prioritized by source reliability):\n\n" + "\n".join(formatted_results)
-            logger.info(f"🔍 Web Search Tool: Found {len(final_results)} prioritized results from {len(raw_results)} total")
-            return search_summary
+            if best_content:
+                return best_content
+            else:
+                return f"No high-quality authoritative sources found for: '{query}'. Try refining your search terms or asking about established topics covered in official documentation."
             
         except Exception as e:
             logger.error(f"🔍 Web Search Tool error: {e}")
             return f"Web search failed: {str(e)}"
+    
+    def _get_search_results(self, query: str, max_results: int) -> List[Dict]:
+        """Get search results from Google Custom Search API"""
+        try:
+            if not GOOGLE_API_KEY:
+                logger.warning("Google Custom Search API key not configured")
+                return []
+            
+            url = "https://www.googleapis.com/customsearch/v1"
+            params = {
+                'key': GOOGLE_API_KEY,
+                'cx': GOOGLE_SEARCH_ENGINE_ID,
+                'q': query,
+                'num': min(max_results, 10),  # Google allows max 10 per request
+                'safe': 'medium'
+            }
+            
+            logger.debug(f"🔍 Google Custom Search API call: {query}")
+            response = requests.get(url, params=params, timeout=15)
+            
+            if response.status_code == 403:
+                logger.error("Google Custom Search API: Quota exceeded or invalid API key")
+                return []
+            elif response.status_code == 429:
+                logger.error("Google Custom Search API: Rate limit exceeded")
+                return []
+            
+            response.raise_for_status()
+            
+            data = response.json()
+            items = data.get('items', [])
+            
+            if not items:
+                logger.info(f"🔍 Google Custom Search: No results found for '{query}'")
+                return []
+            
+            results = []
+            for item in items:
+                results.append({
+                    'title': item.get('title', ''),
+                    'body': item.get('snippet', ''),
+                    'href': item.get('link', ''),
+                    'display_link': item.get('displayLink', '')
+                })
+            
+            logger.info(f"🔍 Google Custom Search: Found {len(results)} results for '{query}'")
+            return results
+            
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Google Custom Search API request failed: {e}")
+            return []
+        except Exception as e:
+            logger.error(f"Google Custom Search failed: {e}")
+            return []
+    
+    def _search_bing(self, query: str, max_results: int) -> List[Dict]:
+        """Search using Bing Search API (if configured) or web scraping"""
+        try:
+            # Check if Bing Search API is configured
+            bing_api_key = os.getenv("BING_SEARCH_API_KEY")
+            
+            if bing_api_key:
+                return self._search_bing_api(query, max_results, bing_api_key)
+            else:
+                # Fallback to simple web scraping of Bing
+                return self._search_bing_scrape(query, max_results)
+                
+        except Exception as e:
+            logger.debug(f"Bing search failed: {e}")
+            return []
+    
+    def _search_bing_api(self, query: str, max_results: int, api_key: str) -> List[Dict]:
+        """Search using official Bing Search API"""
+        try:
+            url = "https://api.bing.microsoft.com/v7.0/search"
+            headers = {'Ocp-Apim-Subscription-Key': api_key}
+            params = {
+                'q': query,
+                'count': min(max_results, 50),  # Bing allows up to 50
+                'responseFilter': 'Webpages'
+            }
+            
+            response = requests.get(url, headers=headers, params=params, timeout=10)
+            response.raise_for_status()
+            
+            data = response.json()
+            web_pages = data.get('webPages', {}).get('value', [])
+            
+            results = []
+            for page in web_pages:
+                results.append({
+                    'title': page.get('name', ''),
+                    'body': page.get('snippet', ''),
+                    'href': page.get('url', '')
+                })
+            
+            logger.info(f"🔍 Bing API Search: Found {len(results)} results")
+            return results
+            
+        except Exception as e:
+            logger.debug(f"Bing API search failed: {e}")
+            return []
+    
+    def _search_bing_scrape(self, query: str, max_results: int) -> List[Dict]:
+        """Fallback: scrape Bing search results (less reliable but works without API keys)"""
+        try:
+            import urllib.parse
+            from bs4 import BeautifulSoup
+            
+            # Encode the query for URL
+            encoded_query = urllib.parse.quote_plus(query)
+            url = f"https://www.bing.com/search?q={encoded_query}&count={min(max_results, 10)}"
+            
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+            }
+            
+            response = requests.get(url, headers=headers, timeout=10)
+            response.raise_for_status()
+            
+            soup = BeautifulSoup(response.text, 'html.parser')
+            results = []
+            
+            # Find search results in Bing's HTML structure
+            for result_div in soup.find_all('li', class_='b_algo')[:max_results]:
+                title_elem = result_div.find('h2')
+                if not title_elem:
+                    continue
+                    
+                link_elem = title_elem.find('a')
+                if not link_elem:
+                    continue
+                
+                title = title_elem.get_text(strip=True)
+                href = link_elem.get('href', '')
+                
+                # Find description
+                desc_elem = result_div.find('p') or result_div.find('div', class_='b_caption')
+                body = desc_elem.get_text(strip=True) if desc_elem else ""
+                
+                if title and href:
+                    results.append({
+                        'title': title,
+                        'body': body,
+                        'href': href
+                    })
+            
+            logger.info(f"🔍 Bing Scrape Search: Found {len(results)} results")
+            return results
+            
+        except Exception as e:
+            logger.debug(f"Bing scrape search failed: {e}")
+            return []
     
     def _prioritize_by_domain(self, results: List[Dict], query: str) -> List[Dict]:
         """Prioritize search results based on domain reputation and query context"""
@@ -634,6 +944,141 @@ class LangchainWebSearchTool(LangchainBaseTool):
         
         return base_score + context_bonus
 
+    def _find_and_scrape_best_source(self, search_results: List[Dict], query: str) -> Optional[str]:
+        """Find and scrape the best source from search results with improved error handling"""
+        # Define priority domains
+        PRIORITY_DOMAINS = {
+            "tier_1_official": ["docs.python.org", "dart.dev", "docs.flutter.dev", "api.flutter.dev", "fastapi.tiangolo.com"],
+            "tier_2_educational": ["realpython.com", "developer.mozilla.org", "w3schools.com"], 
+            "tier_3_community": ["stackoverflow.com", "github.com", "reddit.com"],
+            "tier_4_blogs": ["medium.com", "dev.to", "hashnode.com"]
+        }
+        
+        tier_order = ["tier_1_official", "tier_2_educational", "tier_3_community", "tier_4_blogs"]
+        failed_sources = []
+        partial_content = []
+        
+        for tier_name in tier_order:
+            tier_domains = PRIORITY_DOMAINS[tier_name]
+            for result in search_results:
+                href = result.get('href', '')
+                if not href:
+                    continue
+                
+                from urllib.parse import urlparse
+                try:
+                    domain = urlparse(href).netloc.replace('www.', '')
+                    if any(tier_domain in domain for tier_domain in tier_domains):
+                        logger.info(f"🏆 Found {tier_name} source: {domain}")
+                        content = self._scrape_content(href, result.get('title', ''), tier_name)
+                        
+                        if content:
+                            if content.startswith("❌"):  # Error message from scraping
+                                failed_sources.append(f"{domain}: {content}")
+                                continue
+                            elif len(content.strip()) > 200:  # Good content threshold
+                                logger.info(f"✅ Successfully scraped from {tier_name}: {domain}")
+                                return content
+                            else:
+                                partial_content.append(f"{domain}: {content[:100]}...")
+                        
+                        logger.warning(f"⚠️ No usable content from {domain}")
+                        
+                except Exception as e:
+                    logger.debug(f"Error parsing URL {href}: {e}")
+                    failed_sources.append(f"{href}: Parse error")
+                    continue
+        
+        # If no good sources found, return summary of what was tried
+        if failed_sources or partial_content:
+            summary = f"No high-quality authoritative sources found for: '{query}'. "
+            summary += "Connection issues encountered:\n"
+            
+            for error in failed_sources[:3]:  # Show first 3 failures
+                summary += f"• {error}\n"
+                
+            if partial_content:
+                summary += "\nLimited content found:\n"
+                for partial in partial_content[:2]:
+                    summary += f"• {partial}\n"
+            
+            summary += "Try refining your search terms or asking about established topics covered in official documentation."
+            return summary
+        
+        return None
+
+    def _scrape_content(self, url: str, title: str, tier: str) -> Optional[str]:
+        """Scrape content from URL with improved error handling"""
+        try:
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                'Accept-Language': 'en-US,en;q=0.5',
+                'Accept-Encoding': 'gzip, deflate',
+                'Connection': 'keep-alive',
+            }
+            logger.info(f"🔗 Scraping content from: {url}")
+            
+            # Try with SSL verification first, then without if it fails
+            for verify_ssl in [True, False]:
+                try:
+                    response = requests.get(url, headers=headers, timeout=15, verify=verify_ssl)
+                    response.raise_for_status()
+                    break
+                except (requests.exceptions.SSLError, requests.exceptions.ConnectionError) as e:
+                    if verify_ssl:
+                        logger.warning(f"SSL error for {url}, retrying without SSL verification")
+                        continue
+                    else:
+                        raise e
+            
+            soup = BeautifulSoup(response.text, 'html.parser')
+            for element in soup(['script', 'style', 'nav', 'header', 'footer', 'aside']):
+                element.decompose()
+            
+            # Try multiple content selectors
+            content_selectors = [
+                'main', 'article', '.content', '.post-content', '.entry-content', 
+                '.article-content', '#content', '.page-content', 'body'
+            ]
+            
+            content_area = None
+            for selector in content_selectors:
+                content_area = soup.select_one(selector)
+                if content_area:
+                    break
+            
+            if content_area:
+                text = content_area.get_text(separator='\n', strip=True)
+                # Clean up excessive whitespace
+                text = '\n'.join(line.strip() for line in text.split('\n') if line.strip())
+                
+                if len(text) > 3000:
+                    text = text[:3000] + "\n\n... (content truncated)"
+                
+                tier_indicator = {
+                    "tier_1_official": "🏛️ **OFFICIAL DOCUMENTATION**",
+                    "tier_2_educational": "🎓 **EDUCATIONAL CONTENT**", 
+                    "tier_3_community": "👥 **COMMUNITY CONTENT**",
+                    "tier_4_blogs": "📝 **BLOG CONTENT**"
+                }.get(tier, "🌐 **WEB CONTENT**")
+                
+                return f"{tier_indicator}\n**Source**: {title}\n**URL**: {url}\n\n{text}"
+            return None
+            
+        except requests.exceptions.SSLError as e:
+            logger.error(f"SSL error scraping {url}: {e}")
+            return f"❌ SSL connection failed for {url}"
+        except requests.exceptions.ConnectionError as e:
+            logger.error(f"Connection error scraping {url}: {e}")
+            return f"❌ Connection failed for {url}"
+        except requests.exceptions.Timeout as e:
+            logger.error(f"Timeout scraping {url}: {e}")
+            return f"❌ Request timeout for {url}"
+        except Exception as e:
+            logger.error(f"Failed to scrape {url}: {e}")
+            return None
+
     async def _arun(self, query: str, max_results: int = 5) -> str:
         global executor
         if not executor: return "Error: Server config issue (executor missing)."
@@ -673,12 +1118,14 @@ class LangchainGitStatusTool(LangchainBaseTool):
     def _run(self, directory: str = ".") -> str:
         logger.info(f"🔧 Git Status Tool: directory='{directory}'")
         try:
+            # Use explicit git path and inherit environment
             result = subprocess.run(
-                ["git", "status", "--porcelain"],
+                ["/usr/bin/git", "status", "--porcelain"],
                 cwd=directory,
                 capture_output=True,
                 text=True,
-                timeout=30
+                timeout=30,
+                env=os.environ
             )
             
             if result.returncode != 0:
@@ -739,7 +1186,7 @@ class LangchainGitDiffTool(LangchainBaseTool):
     def _run(self, directory: str = ".", file_path: Optional[str] = None, staged: bool = False) -> str:
         logger.info(f"🔧 Git Diff Tool: directory='{directory}', file='{file_path}', staged={staged}")
         try:
-            cmd = ["git", "diff"]
+            cmd = ["/usr/bin/git", "diff"]
             if staged:
                 cmd.append("--staged")
             if file_path:
@@ -751,6 +1198,7 @@ class LangchainGitDiffTool(LangchainBaseTool):
                 cwd=directory,
                 capture_output=True,
                 text=True,
+                env=os.environ,
                 timeout=60
             )
             
@@ -798,22 +1246,24 @@ class LangchainGitCommitTool(LangchainBaseTool):
             # Add all changes if requested
             if add_all:
                 add_result = subprocess.run(
-                    ["git", "add", "."],
+                    ["/usr/bin/git", "add", "."],
                     cwd=directory,
                     capture_output=True,
                     text=True,
-                    timeout=30
+                    timeout=30,
+                    env=os.environ
                 )
                 if add_result.returncode != 0:
                     return f"Git add failed: {add_result.stderr.strip()}"
             
             # Create commit
             result = subprocess.run(
-                ["git", "commit", "-m", message],
+                ["/usr/bin/git", "commit", "-m", message],
                 cwd=directory,
                 capture_output=True,
                 text=True,
-                timeout=60
+                timeout=60,
+                env=os.environ
             )
             
             if result.returncode != 0:
@@ -824,11 +1274,12 @@ class LangchainGitCommitTool(LangchainBaseTool):
             
             # Get commit hash
             hash_result = subprocess.run(
-                ["git", "rev-parse", "HEAD"],
+                ["/usr/bin/git", "rev-parse", "HEAD"],
                 cwd=directory,
                 capture_output=True,
                 text=True,
-                timeout=10
+                timeout=10,
+                env=os.environ
             )
             
             commit_hash = hash_result.stdout.strip()[:8] if hash_result.returncode == 0 else "unknown"
@@ -859,11 +1310,12 @@ class LangchainGitBranchTool(LangchainBaseTool):
         try:
             if action == "list":
                 result = subprocess.run(
-                    ["git", "branch", "-a"],
+                    ["/usr/bin/git", "branch", "-a"],
                     cwd=directory,
                     capture_output=True,
                     text=True,
-                    timeout=30
+                    timeout=30,
+                    env=os.environ
                 )
                 if result.returncode != 0:
                     return f"Git branch list failed: {result.stderr.strip()}"
@@ -879,11 +1331,12 @@ class LangchainGitBranchTool(LangchainBaseTool):
                     return "Branch name required for create action"
                 
                 result = subprocess.run(
-                    ["git", "checkout", "-b", branch_name],
+                    ["/usr/bin/git", "checkout", "-b", branch_name],
                     cwd=directory,
                     capture_output=True,
                     text=True,
-                    timeout=30
+                    timeout=30,
+                    env=os.environ
                 )
                 if result.returncode != 0:
                     return f"Git branch create failed: {result.stderr.strip()}"
@@ -895,11 +1348,12 @@ class LangchainGitBranchTool(LangchainBaseTool):
                     return "Branch name required for checkout action"
                 
                 result = subprocess.run(
-                    ["git", "checkout", branch_name],
+                    ["/usr/bin/git", "checkout", branch_name],
                     cwd=directory,
                     capture_output=True,
                     text=True,
-                    timeout=30
+                    timeout=30,
+                    env=os.environ
                 )
                 if result.returncode != 0:
                     return f"Git checkout failed: {result.stderr.strip()}"
@@ -911,11 +1365,12 @@ class LangchainGitBranchTool(LangchainBaseTool):
                     return "Branch name required for delete action"
                 
                 result = subprocess.run(
-                    ["git", "branch", "-d", branch_name],
+                    ["/usr/bin/git", "branch", "-d", branch_name],
                     cwd=directory,
                     capture_output=True,
                     text=True,
-                    timeout=30
+                    timeout=30,
+                    env=os.environ
                 )
                 if result.returncode != 0:
                     return f"Git branch delete failed: {result.stderr.strip()}"
@@ -947,7 +1402,7 @@ class LangchainGitLogTool(LangchainBaseTool):
     def _run(self, directory: str = ".", limit: int = 10, oneline: bool = True) -> str:
         logger.info(f"🔧 Git Log Tool: directory='{directory}', limit={limit}, oneline={oneline}")
         try:
-            cmd = ["git", "log", f"--max-count={limit}"]
+            cmd = ["/usr/bin/git", "log", f"--max-count={limit}"]
             if oneline:
                 cmd.append("--oneline")
             else:
@@ -958,7 +1413,8 @@ class LangchainGitLogTool(LangchainBaseTool):
                 cwd=directory,
                 capture_output=True,
                 text=True,
-                timeout=30
+                timeout=30,
+                env=os.environ
             )
             
             if result.returncode != 0:
@@ -1803,7 +2259,7 @@ class SlashCommandProcessor:
         """Load custom commands from memory"""
         try:
             # Get custom commands from memory
-            custom_commands = mcp_get_memory_context("custom_slash_commands")
+            custom_commands = mcp_get_context("custom_slash_commands")
             if custom_commands and isinstance(custom_commands, dict):
                 for cmd_name, cmd_data in custom_commands.items():
                     if cmd_name.startswith('/') and isinstance(cmd_data, dict):
@@ -1887,6 +2343,10 @@ class SlashCommandProcessor:
                 return await self._handle_project_info(args)
             elif action == "workspace_setting":
                 return await self._handle_workspace_setting(args)
+            elif action == "correct":
+                return await self._handle_correct(raw_args)
+            elif action == "fix":
+                return await self._handle_fix(raw_args)
             else:
                 return f"❌ Action '{action}' not implemented yet"
                 
@@ -1911,7 +2371,7 @@ class SlashCommandProcessor:
         
         try:
             tags = {"type": "manual_save", "source": "slash_command"}
-            result = mcp_save_to_memory(info, tags)
+            result = mcp_save_interaction([{"role": "user", "content": f"REMEMBER: {info}"}], tags)
             return f"✅ Saved to memory: {info}"
         except Exception as e:
             return f"❌ Failed to save to memory: {str(e)}"
@@ -1935,10 +2395,52 @@ class SlashCommandProcessor:
         
         try:
             # For now, just save a note about what to forget
-            result = mcp_save_to_memory(f"FORGET: {query}", {"type": "forget_request"})
+            result = mcp_save_interaction([{"role": "user", "content": f"FORGET: {query}"}], {"type": "forget_request"})
             return f"📝 Noted request to forget: {query}"
         except Exception as e:
             return f"❌ Failed to process forget request: {str(e)}"
+    
+    async def _handle_correct(self, correction_text: str) -> str:
+        """Handle /correct command to store AI correction"""
+        if not correction_text:
+            return "❌ Please provide a correction. Usage: /correct <correction_text>"
+        
+        try:
+            # Get the last AI response from Redis (Tier 1 - Working Memory)
+            context = mcp_get_context()
+            if not context.get("status") == "success" or not context.get("context", {}).get("short_term"):
+                return "❌ No recent AI response found to correct"
+            
+            # Find the most recent AI response
+            recent_messages = context["context"]["short_term"]
+            last_ai_response = None
+            
+            for interaction in reversed(recent_messages):
+                messages = interaction.get("messages", [])
+                for message in reversed(messages):
+                    if message.get("role") == "assistant":
+                        last_ai_response = message.get("content")
+                        break
+                if last_ai_response:
+                    break
+            
+            if not last_ai_response:
+                return "❌ No recent AI response found to correct"
+            
+            # Store the correction
+            result = mcp_add_correction(last_ai_response, correction_text)
+            
+            if result.get("status") == "success":
+                return f"✅ Correction stored (ID: {result.get('correction_id')}). I will remember this for future responses."
+            else:
+                return f"❌ Failed to store correction: {result.get('error')}"
+                
+        except Exception as e:
+            return f"❌ Failed to process correction: {str(e)}"
+    
+    async def _handle_fix(self, correction_text: str) -> str:
+        """Handle /fix command (alias for /correct)"""
+        return await self._handle_correct(correction_text)
     
     async def _handle_get_stats(self) -> str:
         try:
@@ -2092,8 +2594,7 @@ class SlashCommandProcessor:
         try:
             custom_commands = mcp_get_memory_context("custom_slash_commands") or {}
             custom_commands[name] = new_command
-            mcp_save_to_memory(f"Custom slash commands: {json.dumps(custom_commands)}", 
-                             {"type": "custom_slash_commands", "key": "custom_slash_commands"})
+            mcp_set_key_value("custom_slash_commands", custom_commands)
             return f"✅ Added custom command {name}: {description}"
         except Exception as e:
             return f"⚠️ Command added to session but failed to save to memory: {str(e)}"
@@ -2120,7 +2621,7 @@ class SlashCommandProcessor:
             custom_commands = mcp_get_memory_context("custom_slash_commands") or {}
             if name in custom_commands:
                 del custom_commands[name]
-            mcp_save_to_memory(f"Custom slash commands: {json.dumps(custom_commands)}", 
+            mcp_save_interaction([{"role": "system", "content": f"Custom slash commands: {json.dumps(custom_commands)}"}], 
                              {"type": "custom_slash_commands", "key": "custom_slash_commands"})
             return f"✅ Removed custom command {name}"
         except Exception as e:
@@ -2170,7 +2671,7 @@ class SlashCommandProcessor:
             if project_desc:
                 project_info += f" - {project_desc}"
             
-            mcp_save_to_memory(project_info, {"type": "current_project", "key": "current_project"})
+            mcp_set_key_value("current_project", project_info)
             return f"✅ Set project: {project_info}"
         except Exception as e:
             return f"❌ Failed to set project info: {str(e)}"
@@ -2195,8 +2696,7 @@ class SlashCommandProcessor:
                 settings = {}
             settings[setting] = value
             
-            mcp_save_to_memory(f"Workspace settings: {json.dumps(settings)}", 
-                             {"type": "workspace_settings", "key": "workspace_settings"})
+            mcp_set_key_value("workspace_settings", settings)
             return f"✅ Set workspace setting {setting} = {value}"
         except Exception as e:
             return f"❌ Failed to set workspace setting: {str(e)}"
@@ -3956,6 +4456,108 @@ def extract_layer1_tags(user_message: str, conversation_context: List[Dict]) -> 
     
     return tags
 
+def build_master_prompt_with_memory(base_prompt: str, user_message: str) -> str:
+    """
+    Master Prompt Template: Integrates Memory System (Tier 1 + Tier 2) with base prompt
+    
+    Args:
+        base_prompt: The base ReAct or other prompt template
+        user_message: Current user message for context retrieval
+        
+    Returns:
+        Enhanced prompt with memory context
+    """
+    try:
+        from mcp_memory import mcp_get_context, mcp_get_corrections
+        
+        # Get memory context (Tier 1: Redis recent context + Tier 2: MongoDB profile)
+        memory_result = mcp_get_context(user_message, include_long_term=False)
+        
+        if memory_result.get("status") != "success":
+            logger.warning(f"⚠️ Memory context retrieval failed: {memory_result.get('error', 'unknown')}")
+            return base_prompt
+            
+        context = memory_result.get("context", {})
+        short_term = context.get("short_term", [])
+        profile = context.get("profile", {})
+        
+        # Get relevant corrections from MongoDB
+        corrections = mcp_get_corrections(limit=3)
+        
+        # Build memory-enhanced prompt
+        memory_sections = []
+        
+        # Add user profile (Tier 2: Rules & Preferences)
+        if profile:
+            rules = profile.get("rules", [])
+            preferences = profile.get("preferences", {})
+            
+            if rules:
+                rules_text = "\n".join([f"- {rule.get('rule', rule)}" for rule in rules[:5]])
+                memory_sections.append(f"**User Rules & Preferences:**\n{rules_text}")
+                
+            if preferences:
+                prefs_text = "\n".join([f"- {k}: {v}" for k, v in preferences.items() if k != "_id"])
+                if prefs_text:
+                    memory_sections.append(f"**Preferences:**\n{prefs_text}")
+        
+        # Add recent conversation context (Tier 1: Redis)
+        if short_term:
+            recent_context = []
+            for interaction in short_term[-3:]:  # Last 3 interactions
+                messages = interaction.get("messages", [])
+                for msg in messages[-2:]:  # Last 2 messages per interaction
+                    role = msg.get("role", "unknown")
+                    content = msg.get("content", "")[:150]  # Truncate for brevity
+                    recent_context.append(f"{role}: {content}...")
+            
+            if recent_context:
+                context_text = "\n".join(recent_context)
+                memory_sections.append(f"**Recent Context:**\n{context_text}")
+        
+        # Add learning from corrections
+        if corrections:
+            correction_lessons = []
+            for correction in corrections:
+                ai_resp = correction.get("ai_response", "")[:100]
+                user_correction = correction.get("user_correction", "")[:100]
+                topic = correction.get("topic", "general")
+                correction_lessons.append(f"Topic: {topic}\n  My mistake: {ai_resp}...\n  Correction: {user_correction}...")
+            
+            if correction_lessons:
+                lessons_text = "\n\n".join(correction_lessons)
+                memory_sections.append(f"**Learn from Past Mistakes:**\n{lessons_text}")
+        
+        # Combine into enhanced prompt
+        if memory_sections:
+            memory_context = "\n\n".join(memory_sections)
+            
+            # Get the original template text and enhance it
+            original_template = base_prompt.template if hasattr(base_prompt, 'template') else str(base_prompt)
+            enhanced_template = f"""{original_template}
+
+IMPORTANT CONTEXT FROM MEMORY SYSTEM:
+{memory_context}
+
+Use this memory context to provide personalized, consistent responses that respect user preferences and learn from past interactions."""
+            
+            # Create new PromptTemplate with enhanced content
+            from langchain.prompts import PromptTemplate
+            enhanced_prompt = PromptTemplate(
+                input_variables=base_prompt.input_variables if hasattr(base_prompt, 'input_variables') else ['tools', 'tool_names', 'agent_scratchpad', 'input'],
+                template=enhanced_template
+            )
+            
+            logger.info(f"🧠 Enhanced prompt with memory context: {len(memory_sections)} sections")
+            return enhanced_prompt
+        else:
+            logger.info("💭 No memory context available, using base prompt")
+            return base_prompt
+            
+    except Exception as e:
+        logger.error(f"❌ Master Prompt Template error: {e}")
+        return base_prompt
+
 def is_title_generation_request(user_message: str) -> bool:
     """Detect if this is Continue's automatic title generation request"""
     user_message_lower = user_message.lower()
@@ -4048,6 +4650,32 @@ def should_use_auto_linter_tools(user_message: str) -> bool:
     user_message_lower = user_message.lower()
     return any(keyword in user_message_lower for keyword in AUTO_LINTER_KEYWORDS)
 
+def should_use_sandbox_tools(user_message: str) -> bool:
+    """Determine if sandbox tools should be made available to the agent"""
+    # Skip sandbox tools for title generation requests
+    if is_title_generation_request(user_message):
+        return False
+    user_message_lower = user_message.lower()
+    
+    # Check for explicit sandbox/execution keywords
+    if any(keyword in user_message_lower for keyword in SANDBOX_KEYWORDS):
+        return True
+    
+    # Check for calculation requests
+    if any(keyword in user_message_lower for keyword in CALCULATION_KEYWORDS):
+        return True
+    
+    # Check for code verification patterns
+    verification_patterns = ["does this work", "test this", "verify", "what happens", "output", "result"]
+    if any(pattern in user_message_lower for pattern in verification_patterns):
+        return True
+    
+    # Check if message contains code blocks (likely needs testing)
+    if "```" in user_message or "def " in user_message or "print(" in user_message:
+        return True
+    
+    return False
+
 def strip_thoughts_from_content(content_to_process: str) -> str:
     final_speakable_content = ""
     while True:
@@ -4068,6 +4696,36 @@ def strip_thoughts_from_content(content_to_process: str) -> str:
             final_speakable_content += content_to_process
             break
     return final_speakable_content.strip()
+
+async def generate_openai_compatible_response(content: str, model_name: str):
+    """
+    Generate OpenAI-compatible streaming response for slash commands and simple responses
+    """
+    request_id = f"chatcmpl-slash-{int(time.time())}"
+    
+    # Split content into words for streaming
+    words = content.split()
+    for i, word in enumerate(words):
+        chunk = {
+            "id": f"{request_id}-{i+1}",
+            "object": "chat.completion.chunk",
+            "created": int(time.time()),
+            "model": model_name,
+            "choices": [{"index": 0, "delta": {"content": word + " "}, "finish_reason": None}]
+        }
+        yield f"data: {json.dumps(chunk)}\n\n"
+        await asyncio.sleep(0.02)  # Small delay for smooth streaming
+    
+    # Send final chunk
+    final_chunk = {
+        "id": f"{request_id}-final",
+        "object": "chat.completion.chunk",
+        "created": int(time.time()),
+        "model": model_name,
+        "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]
+    }
+    yield f"data: {json.dumps(final_chunk)}\n\n"
+    yield "data: [DONE]\n\n"
 
 async def stream_langchain_agent_response(agent_executor_instance: AgentExecutor, input_messages: List[Dict[str, str]], model_name_used: str, request_id_prefix_str: str):
     """
@@ -4274,12 +4932,13 @@ async def chat_proxy(request: Request):
         use_dev_workflow_tools = should_use_dev_workflow_tools(last_user_message_content)
         use_repo_analysis_tools = should_use_repo_analysis_tools(last_user_message_content)
         use_auto_linter_tools = should_use_auto_linter_tools(last_user_message_content)
-        use_langchain_agent = use_memory_tools or use_rag_tools or use_web_search or use_git_tools or use_github_tools or use_dev_workflow_tools or use_repo_analysis_tools or use_auto_linter_tools
+        use_sandbox_tools = should_use_sandbox_tools(last_user_message_content)
+        use_langchain_agent = use_memory_tools or use_rag_tools or use_web_search or use_git_tools or use_github_tools or use_dev_workflow_tools or use_repo_analysis_tools or use_auto_linter_tools or use_sandbox_tools
         
         if is_title_request:
             logger.info(f"📝 Orchestrator Decision: Title generation request detected - routing to direct path")
         else:
-            logger.info(f"🧠 Orchestrator Decision: Memory={use_memory_tools}, RAG={use_rag_tools}, WebSearch={use_web_search}, Git={use_git_tools}, GitHub={use_github_tools}, DevWorkflow={use_dev_workflow_tools}, RepoAnalysis={use_repo_analysis_tools}, AutoLinter={use_auto_linter_tools}, Agent={use_langchain_agent}")
+            logger.info(f"🧠 Orchestrator Decision: Memory={use_memory_tools}, RAG={use_rag_tools}, WebSearch={use_web_search}, Git={use_git_tools}, GitHub={use_github_tools}, DevWorkflow={use_dev_workflow_tools}, RepoAnalysis={use_repo_analysis_tools}, AutoLinter={use_auto_linter_tools}, Sandbox={use_sandbox_tools}, Agent={use_langchain_agent}")
         
         request_id_base = int(time.time())
 
@@ -4349,8 +5008,18 @@ async def chat_proxy(request: Request):
                 tools.append(LangchainAutoLinterTool())
                 logger.info("🔍 Added auto-linter tool to agent")
             
-            # Standard ReAct prompt for tool usage
-            prompt = hub.pull("hwchase17/react")
+            if use_sandbox_tools:
+                tools.extend([
+                    LangchainSandboxExecuteTool(),
+                    LangchainSandboxDebugTool(),
+                    LangchainSandboxStatsTool()
+                ])
+                logger.info("🔒 Added sandbox tools to agent")
+            
+            # Get base ReAct prompt and enhance with memory context
+            base_prompt = hub.pull("hwchase17/react")
+            user_message = messages[-1]["content"] if messages else ""
+            prompt = build_master_prompt_with_memory(base_prompt, user_message)
             
             # Create agent with selected tools
             agent = create_react_agent(llm, tools, prompt)
