@@ -5150,6 +5150,21 @@ def should_use_sandbox_tools(user_message: str) -> bool:
     
     return False
 
+def should_use_naming_conventions(user_message: str) -> bool:
+    """Determine if the request is about applying naming conventions"""
+    if is_title_generation_request(user_message):
+        return False
+    
+    user_message_lower = user_message.lower()
+    
+    naming_keywords = [
+        "naming convention", "correct naming", "use correct naming",
+        "proper naming", "rename", "naming standards", "naming style",
+        "camelcase", "snake_case", "pascalcase", "kebab-case"
+    ]
+    
+    return any(keyword in user_message_lower for keyword in naming_keywords)
+
 def should_use_code_analysis_workflow(user_message: str) -> bool:
     """Determine if the request requires sequential code analysis workflow"""
     if is_title_generation_request(user_message):
@@ -5483,6 +5498,7 @@ async def chat_proxy(request: Request):
         
         # Orchestrator Logic: Decide which tools to use
         is_title_request = is_title_generation_request(last_user_message_content)
+        use_naming_conventions = should_use_naming_conventions(original_user_message)
         use_code_analysis_workflow = should_use_code_analysis_workflow(original_user_message)
         use_memory_tools = should_use_memory_tools(last_user_message_content)
         use_rag_tools = should_use_rag_tools(last_user_message_content)
@@ -5497,15 +5513,95 @@ async def chat_proxy(request: Request):
         
         if is_title_request:
             logger.info(f"📝 Orchestrator Decision: Title generation request detected - routing to direct path")
+        elif use_naming_conventions:
+            logger.info(f"📝 Orchestrator Decision: Naming conventions request detected - loading conventions guide")
         elif use_code_analysis_workflow:
             logger.info(f"🔄 Orchestrator Decision: Code analysis workflow detected - using sequential analysis")
         else:
-            logger.info(f"🧠 Orchestrator Decision: CodeWorkflow={use_code_analysis_workflow}, Memory={use_memory_tools}, RAG={use_rag_tools}, WebSearch={use_web_search}, Git={use_git_tools}, GitHub={use_github_tools}, DevWorkflow={use_dev_workflow_tools}, RepoAnalysis={use_repo_analysis_tools}, AutoLinter={use_auto_linter_tools}, Sandbox={use_sandbox_tools}, Agent={use_langchain_agent}")
+            logger.info(f"🧠 Orchestrator Decision: NamingConv={use_naming_conventions}, CodeWorkflow={use_code_analysis_workflow}, Memory={use_memory_tools}, RAG={use_rag_tools}, WebSearch={use_web_search}, Git={use_git_tools}, GitHub={use_github_tools}, DevWorkflow={use_dev_workflow_tools}, RepoAnalysis={use_repo_analysis_tools}, AutoLinter={use_auto_linter_tools}, Sandbox={use_sandbox_tools}, Agent={use_langchain_agent}")
         
         request_id_base = int(time.time())
 
+        # NAMING CONVENTIONS PATH
+        if use_naming_conventions:
+            logger.info("📝 Chat Path: Loading naming conventions guide.")
+            try:
+                # Read the naming conventions file
+                with open("/mnt/caseSSD/mcp_server_project/name_conv.md", "r") as f:
+                    conventions_content = f.read()
+                
+                # Create a response that includes the conventions and applies them to any code in the message
+                code_context = extract_code_from_message(original_user_message)
+                
+                response_content = f"""# 📝 Naming Conventions Applied
+
+{conventions_content}
+
+---
+
+"""
+                
+                # If there's code in the message, apply conventions to it
+                if code_context["code"].strip():
+                    language = code_context["language"]
+                    response_content += f"""## Your Code with Correct Naming Conventions
+
+**Detected Language**: {language}
+
+**Original Code**:
+```{language}
+{code_context["code"]}
+```
+
+**Naming Convention Guidelines for {language.title()}**:
+"""
+                    
+                    # Add language-specific guidelines
+                    if language.lower() in ['dart', 'flutter']:
+                        response_content += """
+- Variables/functions/methods → `camelCase`
+- Classes/types/enums → `PascalCase`  
+- Constants → `lowerCamelCase`
+- Files/directories → `snake_case`
+"""
+                    elif language.lower() == 'python':
+                        response_content += """
+- Variables/functions/methods → `snake_case`
+- Classes → `PascalCase`
+- Constants → `SCREAMING_SNAKE_CASE`
+- Files/modules → `snake_case`
+"""
+                    elif language.lower() in ['javascript', 'typescript', 'js', 'ts']:
+                        response_content += """
+- Variables/functions → `camelCase`
+- Classes/interfaces → `PascalCase`
+- Constants → `SCREAMING_SNAKE_CASE` or `camelCase`
+- Files → `camelCase` or `kebab-case`
+"""
+                else:
+                    response_content += "\n*Include code in your message for specific naming convention application.*"
+                
+                return StreamingResponse(
+                    generate_openai_compatible_response(response_content, requested_model_name),
+                    media_type="text/plain"
+                )
+                
+            except FileNotFoundError:
+                error_msg = "❌ Naming conventions file not found. Please ensure name_conv.md exists in the project directory."
+                return StreamingResponse(
+                    generate_openai_compatible_response(error_msg, requested_model_name),
+                    media_type="text/plain"
+                )
+            except Exception as e:
+                logger.error(f"❌ Naming conventions error: {str(e)}")
+                error_msg = f"❌ Error loading naming conventions: {str(e)}"
+                return StreamingResponse(
+                    generate_openai_compatible_response(error_msg, requested_model_name),
+                    media_type="text/plain"
+                )
+
         # CODE ANALYSIS WORKFLOW PATH
-        if use_code_analysis_workflow:
+        elif use_code_analysis_workflow:
             logger.info("🔄 Chat Path: Using Sequential Code Analysis Workflow.")
             
             # Extract code and context from message
