@@ -1,9 +1,12 @@
 # ⚡ Slash Commands - Quick Reference
 
-## 🧠 Memory (5 commands)
+## 🧠 Memory (8 commands)
 | Command | Purpose | Example |
 |---------|---------|---------|
 | `/rule <text>` | Add preference/rule | `/rule I prefer TypeScript` |
+| `/list_rules [search]` | List rules with IDs | `/list_rules coding` |
+| `/delete_rule <id>` | Delete rule by ID | `/delete_rule ab12cd34` |
+| `/change_rule <id> <text>` | Update rule by ID | `/change_rule ab12cd34 I prefer Vue` |
 | `/remember <info>` | Save information | `/remember Uses Firebase auth` |
 | `/recall <query>` | Retrieve information | `/recall Firebase` |
 | `/forget <query>` | Remove information | `/forget old settings` |
@@ -59,7 +62,10 @@
 
 **Memory Management:**
 ```bash
+/rule I prefer detailed code comments
 /remember "API endpoint: https://api.example.com"
+/list_rules coding
+/change_rule ab12cd34 I prefer concise comments
 /recall "API"
 /stats
 ```
@@ -79,4 +85,4 @@
 - Memory integration keeps context alive
 - Direct tool access = instant responses
 
-**⚡ 17 built-in commands + unlimited custom commands = infinite possibilities!**
+**⚡ 20 built-in commands + unlimited custom commands = infinite possibilities!**

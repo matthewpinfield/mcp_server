@@ -85,7 +85,7 @@ import requests
 from urllib.parse import quote
 
 # --- Configuration (Environment Variables) ---
-RAG_SERVER_ENDPOINT = os.getenv("RAG_SERVER_ENDPOINT", "http://localhost:8008/custom_rag_stuff")
+RAG_SERVER_ENDPOINT = os.getenv("RAG_SERVER_ENDPOINT", "http://localhost:8008/search/docs")
 OLLAMA_API_BASE = os.getenv("OLLAMA_API_BASE", "http://localhost:11434") 
 OLLAMA_OPENAI_BASE = os.getenv("OLLAMA_OPENAI_BASE", "http://localhost:11434/v1") 
 DEFAULT_MODEL = os.getenv("DEFAULT_MODEL", "qwen3:8b") 
@@ -4068,15 +4068,27 @@ class LangchainFlutterDocTool(LangchainBaseTool):
         logger.info(f"📚 RAG Tool: Received query: '{query}'")
         try:
             import requests
-            response = requests.post(RAG_SERVER_ENDPOINT, json={"fullInput": query}, timeout=REQUEST_TIMEOUT)
+            response = requests.post(RAG_SERVER_ENDPOINT, params={"query": query, "limit": 5}, timeout=REQUEST_TIMEOUT)
             response.raise_for_status()
             try:
                 rag_json = response.json()
-                if isinstance(rag_json, dict):
+                if isinstance(rag_json, dict) and "results" in rag_json:
+                    # Handle dual endpoint server response format
+                    results = rag_json["results"]
+                    if results:
+                        result_text = f"📚 **Flutter/Dart Documentation Results** (Database: {rag_json.get('database', 'unknown')})\n\n"
+                        for i, result in enumerate(results[:3], 1):  # Show top 3 results
+                            text = result.get('text', '').strip()
+                            if len(text) > 800:
+                                text = text[:800] + "..."
+                            result_text += f"**Result {i}:**\n{text}\n\n"
+                    else:
+                        result_text = "No relevant documentation found."
+                elif isinstance(rag_json, dict):
+                    # Fallback for other response formats
                     if "answer" in rag_json: result_text = rag_json["answer"]
                     elif "text" in rag_json: result_text = rag_json["text"]
                     elif "content" in rag_json: result_text = rag_json["content"]
-                    elif "retrieved_documentation_text" in rag_json: result_text = rag_json["retrieved_documentation_text"]
                     else: result_text = json.dumps(rag_json)
                 else: result_text = json.dumps(rag_json)
             except ValueError: result_text = response.text

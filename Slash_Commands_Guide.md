@@ -6,7 +6,7 @@ The Advanced MCP Server now includes a comprehensive slash command system that p
 
 ## ⚡ Key Features
 
-- **17 Built-in Commands** across 5 categories
+- **20 Built-in Commands** across 5 categories
 - **Custom Command Creation** - Add your own commands dynamically
 - **Memory Integration** - Commands stored in memory persist across sessions  
 - **Direct Tool Access** - Bypass orchestrator for instant responses
@@ -23,6 +23,21 @@ The Advanced MCP Server now includes a comprehensive slash command system that p
 **Purpose**: Add a new rule or preference to memory  
 **Example**: `/rule I prefer detailed code explanations`  
 **Use Case**: Set coding preferences, project guidelines, personal rules
+
+#### `/list_rules [search_term]`
+**Purpose**: List all rules with optional search filtering  
+**Example**: `/list_rules coding`  
+**Use Case**: Find existing rules, get rule IDs for updates/deletion
+
+#### `/delete_rule <rule_id>`
+**Purpose**: Delete a specific rule from memory by ID  
+**Example**: `/delete_rule ab12cd34`  
+**Use Case**: Remove outdated rules, clean up preferences
+
+#### `/change_rule <rule_id> <new_rule_text>`
+**Purpose**: Update a specific rule in memory by ID  
+**Example**: `/change_rule ab12cd34 I prefer concise explanations`  
+**Use Case**: Modify existing rules without losing history
 
 #### `/remember <information>`
 **Purpose**: Save specific information to memory  
@@ -150,10 +165,15 @@ The Advanced MCP Server now includes a comprehensive slash command system that p
 
 ### **Memory Management Workflow**
 ```bash
-# Store project information
+# Store project information and rules
+/rule "Always use async/await for API calls"
 /remember "This project uses Firebase for authentication"
 /remember "Database schema updated on March 15th"
-/rule "Always use async/await for API calls"
+
+# List and manage rules
+/list_rules async
+/change_rule ab12cd34 "Always use async/await with error handling"
+/delete_rule old_rule_id
 
 # Later retrieve information
 /recall "Firebase"

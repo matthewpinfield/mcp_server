@@ -24,6 +24,7 @@ import redis
 import pymongo
 import chromadb
 from chromadb.utils import embedding_functions
+import ollama
 
 # MCP imports (will be added when integrating with gemini_mcp_server)
 # from mcp import types
@@ -41,13 +42,17 @@ REDIS_DB = 0
 MONGODB_URI = "mongodb://localhost:27017/"
 MONGODB_DATABASE = "mcp_memory"
 
-CHROMA_PATH = os.path.join(NAS_BASE_DATA_PATH, "memory_vector_db")
-DEFAULT_EMBEDDING_MODEL = "all-MiniLM-L6-v2"
+# Memory tier paths
+CHROMA_TIER3_PATH = os.path.join(SSD_BASE_DATA_PATH, "tier3_memory_db")  # Tier 3 (SSD - fast)
+CHROMA_NAS_PATH = os.path.join(NAS_BASE_DATA_PATH, "memory_vector_db")   # NAS archive (slow)
+DEFAULT_EMBEDDING_MODEL = "nomic-embed-text:latest"
 
 # Memory settings
 DEFAULT_USER = "default_user"
 CONTEXT_WINDOW_HOURS = 24  # Hours of conversation context to retrieve
-ARCHIVE_AFTER_DAYS = 30
+ARCHIVE_AFTER_DAYS = 14  # Days before Tier 1 → Tier 3a migration
+NAS_ARCHIVE_AFTER_DAYS = 30  # Days before Tier 3a → Tier 3b migration
+TIER_2_WARNING_THRESHOLD = 1000  # Number of rules before warning
 
 # Logging setup
 logging.basicConfig(level=logging.INFO)
@@ -68,18 +73,21 @@ class MemorySystem:
         self.redis_client = None
         self.mongo_client = None
         self.mongo_db = None
-        self.chroma_client = None
-        self.long_term_memory = None
+        self.chroma_tier3_client = None
+        self.chroma_nas_client = None
+        self.tier3_memory = None  # Tier 3 (SSD - fast)
+        self.nas_archive = None   # NAS archive (slow)
         self.embedding_func = None
         self._initialize_databases()
     
     def _initialize_databases(self):
-        """Initialize all three database connections"""
+        """Initialize all database connections with 4-tier architecture"""
         try:
             self._setup_redis()
             self._setup_mongodb()
-            self._setup_chromadb()
-            logger.info("✅ All database connections initialized successfully")
+            self._setup_chromadb_tier3()  # Tier 3
+            self._setup_chromadb_nas()     # NAS archive
+            logger.info("✅ All 4-tier database connections initialized successfully")
         except Exception as e:
             logger.error(f"❌ Failed to initialize databases: {e}")
             raise
@@ -143,34 +151,134 @@ class MemorySystem:
             profiles.insert_one(default_profile)
             logger.info("✅ Default user profile created")
     
-    def _setup_chromadb(self):
-        """Initialize ChromaDB connection for long-term semantic memory"""
+    def _check_and_mount_nas(self):
+        """Check if NAS is online and accessible"""
+        import subprocess
+        import time
+        
+        nas_mount_point = "/mnt/my_nas_mcp_share"
+        
+        # Step 1: Check if mount point exists
+        if not os.path.exists(nas_mount_point):
+            logger.error(f"❌ NAS mount point missing: {nas_mount_point}")
+            return False
+        
+        # Step 2: Check if NAS is responding (test file access with timeout)
         try:
-            # Ensure NAS directory exists
-            os.makedirs(CHROMA_PATH, exist_ok=True)
+            # Test directory listing with timeout
+            result = subprocess.run(['timeout', '5', 'ls', nas_mount_point], 
+                                  capture_output=True, text=True, timeout=10)
+            if result.returncode != 0:
+                logger.error("❌ NAS directory listing failed (network timeout or NAS offline)")
+                return False
+        except subprocess.TimeoutExpired:
+            logger.error("❌ NAS access timeout - network may be down or NAS offline")
+            return False
+        except Exception as e:
+            logger.error(f"❌ NAS connectivity test failed: {e}")
+            return False
+        
+        # Step 3: Test write access to verify NAS is fully operational
+        try:
+            test_file = os.path.join(nas_mount_point, ".nas_connectivity_test")
+            with open(test_file, 'w') as f:
+                f.write(f"connectivity_test_{time.time()}")
+            os.remove(test_file)
+            logger.info("✅ NAS online and accessible")
+            return True
             
-            # Initialize persistent client on NAS
-            self.chroma_client = chromadb.PersistentClient(path=CHROMA_PATH)
+        except OSError as e:
+            if "Read-only file system" in str(e):
+                logger.error("❌ NAS is read-only - storage may be full or NAS in maintenance mode")
+            elif "No space left" in str(e):
+                logger.error("❌ NAS storage full")
+            elif "Permission denied" in str(e):
+                logger.error("❌ NAS permission denied - check credentials")
+            else:
+                logger.error(f"❌ NAS write test failed: {e}")
+            return False
+        except Exception as e:
+            logger.error(f"❌ NAS accessibility failed: {e}")
+            logger.error("   NAS may be offline or network connection lost")
+            return False
+
+    def _setup_chromadb_tier3(self):
+        """Initialize ChromaDB on SSD for Tier 3 (semantic search)"""
+        try:
+            # Ensure SSD directory exists
+            os.makedirs(CHROMA_TIER3_PATH, exist_ok=True)
             
-            # Set up embedding function (use default if sentence_transformers not available)
-            try:
-                self.embedding_func = embedding_functions.SentenceTransformerEmbeddingFunction(
-                    model_name=DEFAULT_EMBEDDING_MODEL
-                )
-            except Exception as e:
-                logger.warning(f"⚠️ SentenceTransformer not available, using default embedding: {e}")
-                self.embedding_func = embedding_functions.DefaultEmbeddingFunction()
+            # Initialize persistent client on SSD
+            self.chroma_tier3_client = chromadb.PersistentClient(path=CHROMA_TIER3_PATH)
             
-            # Create/get long-term memory collection
-            self.long_term_memory = self.chroma_client.get_or_create_collection(
-                name="long_term_memory",
+            # Set up Ollama embedding function
+            if not self.embedding_func:
+                class OllamaEmbeddingFunction(embedding_functions.EmbeddingFunction):
+                    def __init__(self, model_name: str):
+                        self.model_name = model_name
+                    
+                    def __call__(self, input: List[str]) -> List[List[float]]:
+                        embeddings = []
+                        for text in input:
+                            try:
+                                result = ollama.embeddings(model=self.model_name, prompt=text)
+                                embeddings.append(result['embedding'])
+                            except Exception as e:
+                                logger.error(f"Ollama embedding error for text '{text[:50]}...': {e}")
+                                # Return zero vector as fallback (768 dimensions for nomic-embed-text)
+                                embeddings.append([0.0] * 768)
+                        return embeddings
+                
+                self.embedding_func = OllamaEmbeddingFunction(DEFAULT_EMBEDDING_MODEL)
+            
+            # Create/get tier 3 memory collection
+            self.tier3_memory = self.chroma_tier3_client.get_or_create_collection(
+                name="tier3_memory",
                 embedding_function=self.embedding_func
             )
             
-            logger.info(f"✅ ChromaDB initialized with {self.long_term_memory.count()} memories")
+            logger.info(f"✅ ChromaDB Tier 3 initialized with {self.tier3_memory.count()} memories")
         except Exception as e:
-            logger.error(f"❌ ChromaDB connection failed: {e}")
+            logger.error(f"❌ ChromaDB SSD connection failed: {e}")
             raise
+
+    def _setup_chromadb_nas(self):
+        """Initialize ChromaDB on NAS for Tier 3b (long-term archive 30+ days)"""
+        try:
+            # Check NAS connectivity first
+            if not self._check_and_mount_nas():
+                logger.warning("⚠️ NAS not available - Tier 3b (long-term archive) will be limited")
+                self.chroma_nas_client = None
+                self.archive_memory = None
+                return
+            
+            # Ensure NAS directory exists
+            os.makedirs(CHROMA_NAS_PATH, exist_ok=True)
+            
+            # Test write access to NAS
+            test_file = os.path.join(CHROMA_NAS_PATH, ".write_test")
+            try:
+                with open(test_file, 'w') as f:
+                    f.write("test")
+                os.remove(test_file)
+                logger.info("✅ NAS write access confirmed")
+            except Exception as e:
+                logger.warning(f"⚠️ NAS write access failed: {e} - Tier 3b will be read-only")
+            
+            # Initialize persistent client on NAS
+            self.chroma_nas_client = chromadb.PersistentClient(path=CHROMA_NAS_PATH)
+            
+            # Create/get NAS archive collection
+            self.nas_archive = self.chroma_nas_client.get_or_create_collection(
+                name="nas_archive",
+                embedding_function=self.embedding_func
+            )
+            
+            logger.info(f"✅ ChromaDB NAS archive initialized with {self.nas_archive.count()} archived memories")
+        except Exception as e:
+            logger.warning(f"⚠️ ChromaDB NAS connection failed: {e} - long-term archive unavailable")
+            self.chroma_nas_client = None
+            self.nas_archive = None
     
     def save_interaction(self, messages: List[Dict], tags: Optional[Dict] = None) -> Dict:
         """
@@ -203,7 +311,7 @@ class MemorySystem:
                 redis_key = f"context:{DEFAULT_USER}:{interaction_id}"
                 self.redis_client.setex(
                     redis_key,
-                    timedelta(hours=CONTEXT_WINDOW_HOURS),
+                    timedelta(days=ARCHIVE_AFTER_DAYS),  # 14 days
                     json.dumps(interaction_data, default=str)
                 )
                 results["redis"] = redis_key
@@ -222,7 +330,7 @@ class MemorySystem:
             else:
                 results["mongodb"] = "unavailable"
             
-            # Tier 3: Save to ChromaDB (semantic search)
+            # Tier 3: Save to ChromaDB (semantic search) - NOW ON SSD
             conversation_text = self._format_messages_for_search(messages)
             
             # Prepare metadata for ChromaDB
@@ -236,7 +344,7 @@ class MemorySystem:
             if tags:
                 metadata.update(tags)
             
-            self.long_term_memory.add(
+            self.tier3_memory.add(
                 documents=[conversation_text],
                 metadatas=[metadata],
                 ids=[interaction_id]
@@ -370,6 +478,148 @@ class MemorySystem:
             logger.error(f"❌ Failed to add rule: {e}")
             return {"status": "error", "error": str(e)}
     
+    def delete_permanent_rule(self, rule_id: str) -> Dict:
+        """
+        Administrative operation - deletes permanent rule from user profile
+        
+        Args:
+            rule_id: The rule ID to delete (8-character hash)
+        
+        Returns:
+            Dict with operation status
+        """
+        if self.mongo_db is None:
+            return {"status": "error", "error": "MongoDB unavailable"}
+            
+        try:
+            # First, get the rule to confirm it exists
+            profile = self.mongo_db.profiles.find_one({"user_id": DEFAULT_USER})
+            if not profile or "rules" not in profile:
+                return {"status": "error", "error": "No rules found in profile"}
+            
+            # Find the rule by ID
+            rule_to_delete = None
+            for rule in profile["rules"]:
+                if rule.get("id") == rule_id:
+                    rule_to_delete = rule
+                    break
+            
+            if not rule_to_delete:
+                return {"status": "error", "error": f"Rule with ID '{rule_id}' not found"}
+            
+            # Delete the rule
+            result = self.mongo_db.profiles.update_one(
+                {"user_id": DEFAULT_USER},
+                {"$pull": {"rules": {"id": rule_id}}}
+            )
+            
+            if result.modified_count > 0:
+                logger.info(f"✅ Rule deleted: {rule_to_delete.get('rule', rule_id)}")
+                return {"status": "success", "deleted_rule": rule_to_delete}
+            else:
+                return {"status": "error", "error": "Failed to delete rule"}
+                
+        except Exception as e:
+            logger.error(f"❌ Failed to delete rule: {e}")
+            return {"status": "error", "error": str(e)}
+    
+    def update_permanent_rule(self, rule_id: str, new_rule: str, new_category: str = None) -> Dict:
+        """
+        Administrative operation - updates permanent rule in user profile
+        
+        Args:
+            rule_id: The rule ID to update (8-character hash)
+            new_rule: The new rule text
+            new_category: Optional new category (keeps existing if None)
+        
+        Returns:
+            Dict with operation status
+        """
+        if self.mongo_db is None:
+            return {"status": "error", "error": "MongoDB unavailable"}
+            
+        try:
+            # First, get the existing rule
+            profile = self.mongo_db.profiles.find_one({"user_id": DEFAULT_USER})
+            if not profile or "rules" not in profile:
+                return {"status": "error", "error": "No rules found in profile"}
+            
+            # Find the rule by ID
+            existing_rule = None
+            for rule in profile["rules"]:
+                if rule.get("id") == rule_id:
+                    existing_rule = rule
+                    break
+            
+            if not existing_rule:
+                return {"status": "error", "error": f"Rule with ID '{rule_id}' not found"}
+            
+            # Prepare update data
+            update_data = {
+                "rule": new_rule,
+                "category": new_category if new_category else existing_rule.get("category", "general"),
+                "added_at": existing_rule.get("added_at"),  # Keep original timestamp
+                "updated_at": datetime.now(),
+                "id": rule_id  # Keep the same ID - don't regenerate
+            }
+            
+            # Update the rule using array filters
+            result = self.mongo_db.profiles.update_one(
+                {"user_id": DEFAULT_USER, "rules.id": rule_id},
+                {"$set": {"rules.$": update_data}}
+            )
+            
+            if result.modified_count > 0:
+                logger.info(f"✅ Rule updated: {existing_rule.get('rule')} -> {new_rule}")
+                return {"status": "success", "old_rule": existing_rule, "new_rule": update_data}
+            else:
+                return {"status": "error", "error": "Failed to update rule"}
+                
+        except Exception as e:
+            logger.error(f"❌ Failed to update rule: {e}")
+            return {"status": "error", "error": str(e)}
+    
+    def list_permanent_rules(self, search_query: str = None) -> Dict:
+        """
+        List permanent rules from user profile with optional search filtering
+        
+        Args:
+            search_query: Optional search term to filter rules by content
+        
+        Returns:
+            Dict with list of rules and their details
+        """
+        if self.mongo_db is None:
+            return {"status": "error", "error": "MongoDB unavailable"}
+            
+        try:
+            profile = self.mongo_db.profiles.find_one({"user_id": DEFAULT_USER})
+            if not profile or "rules" not in profile:
+                return {"status": "success", "rules": [], "count": 0}
+            
+            rules = profile["rules"]
+            
+            # Filter by search query if provided
+            if search_query:
+                search_lower = search_query.lower()
+                filtered_rules = []
+                for rule in rules:
+                    rule_text = rule.get("rule", "").lower()
+                    rule_category = rule.get("category", "").lower()
+                    if search_lower in rule_text or search_lower in rule_category:
+                        filtered_rules.append(rule)
+                rules = filtered_rules
+            
+            # Sort by creation date (newest first)
+            rules.sort(key=lambda x: x.get("added_at", datetime.min), reverse=True)
+            
+            logger.info(f"✅ Listed {len(rules)} rules" + (f" matching '{search_query}'" if search_query else ""))
+            return {"status": "success", "rules": rules, "count": len(rules), "search_query": search_query}
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to list rules: {e}")
+            return {"status": "error", "error": str(e)}
+    
     def add_correction(self, ai_response: str, user_correction: str, topic: str = None) -> Dict:
         """
         Store AI correction for learning from mistakes
@@ -477,12 +727,21 @@ class MemorySystem:
             else:
                 stats["mongodb"] = {"status": "unavailable"}
             
-            # ChromaDB stats
-            stats["chromadb"] = {
+            # ChromaDB stats (Tier 3 and NAS)
+            stats["tier3_memory"] = {
                 "status": "connected",
-                "memory_count": self.long_term_memory.count(),
-                "storage_path": CHROMA_PATH
+                "memory_count": self.tier3_memory.count(),
+                "storage_path": CHROMA_TIER3_PATH
             }
+            
+            if self.nas_archive:
+                stats["nas_archive"] = {
+                    "status": "connected", 
+                    "memory_count": self.nas_archive.count(),
+                    "storage_path": CHROMA_NAS_PATH
+                }
+            else:
+                stats["nas_archive"] = {"status": "unavailable"}
             
             logger.info("✅ Memory stats retrieved")
             return {"status": "success", "stats": stats}
@@ -533,9 +792,10 @@ class MemorySystem:
             return {}
     
     def _search_long_term_memory(self, query: str, n_results: int = 5) -> List[Dict]:
-        """Search long-term semantic memory"""
+        """Search long-term semantic memory (SSD first, then NAS)"""
         try:
-            results = self.long_term_memory.query(
+            # Search Tier 3 (SSD) first
+            results = self.tier3_memory.query(
                 query_texts=[query],
                 n_results=n_results
             )
@@ -598,6 +858,18 @@ def mcp_save_interaction(messages: List[Dict], tags: Dict = None) -> Dict:
 def mcp_add_permanent_rule(rule: str, category: str = "general") -> Dict:
     """MCP Tool: Add permanent rule to user profile"""
     return get_memory_system().add_permanent_rule(rule, category)
+
+def mcp_delete_permanent_rule(rule_id: str) -> Dict:
+    """MCP Tool: Delete permanent rule from user profile by ID"""
+    return get_memory_system().delete_permanent_rule(rule_id)
+
+def mcp_update_permanent_rule(rule_id: str, new_rule: str, new_category: str = None) -> Dict:
+    """MCP Tool: Update permanent rule in user profile by ID"""
+    return get_memory_system().update_permanent_rule(rule_id, new_rule, new_category)
+
+def mcp_list_permanent_rules(search_query: str = None) -> Dict:
+    """MCP Tool: List permanent rules with optional search filtering"""
+    return get_memory_system().list_permanent_rules(search_query)
 
 def mcp_get_memory_stats() -> Dict:
     """MCP Tool: Get memory system diagnostics"""
