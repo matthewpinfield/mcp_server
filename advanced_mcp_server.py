@@ -4106,6 +4106,468 @@ class LangchainFlutterDocTool(LangchainBaseTool):
 
 # ===== ORCHESTRATOR LOGIC =====
 
+# ===== SEQUENTIAL WORKFLOW ENGINE =====
+
+from abc import ABC, abstractmethod
+from dataclasses import dataclass
+from typing import Any, Dict, List, Optional, Union
+from enum import Enum
+
+class StepStatus(Enum):
+    PENDING = "pending"
+    IN_PROGRESS = "in_progress"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    SKIPPED = "skipped"
+
+@dataclass
+class StepResult:
+    """Result of a workflow step execution"""
+    status: StepStatus
+    data: Dict[str, Any]
+    message: str
+    next_step_recommendations: Optional[List[str]] = None
+    should_stop_workflow: bool = False
+    
+    def is_success(self) -> bool:
+        return self.status == StepStatus.COMPLETED
+    
+    def has_issues(self) -> bool:
+        return self.data.get('issues_found', False) or self.data.get('errors', [])
+
+class WorkflowStep(ABC):
+    """Abstract base class for workflow steps"""
+    
+    def __init__(self, name: str, description: str):
+        self.name = name
+        self.description = description
+        self.status = StepStatus.PENDING
+        
+    @abstractmethod
+    async def execute(self, context: Dict[str, Any], previous_results: List[StepResult]) -> StepResult:
+        """Execute the workflow step"""
+        pass
+    
+    def should_skip(self, context: Dict[str, Any], previous_results: List[StepResult]) -> bool:
+        """Determine if this step should be skipped based on context/previous results"""
+        return False
+
+class WorkflowEngine:
+    """Manages sequential execution of workflow steps"""
+    
+    def __init__(self, workflow_name: str):
+        self.workflow_name = workflow_name
+        self.steps: List[WorkflowStep] = []
+        self.execution_log: List[Dict[str, Any]] = []
+        
+    def add_step(self, step: WorkflowStep):
+        """Add a step to the workflow"""
+        self.steps.append(step)
+        
+    async def execute(self, initial_context: Dict[str, Any]) -> Dict[str, Any]:
+        """Execute the workflow sequentially"""
+        logger.info(f"🔄 Starting workflow: {self.workflow_name}")
+        
+        context = initial_context.copy()
+        step_results: List[StepResult] = []
+        
+        for i, step in enumerate(self.steps, 1):
+            logger.info(f"📋 Step {i}/{len(self.steps)}: {step.name}")
+            
+            # Check if step should be skipped
+            if step.should_skip(context, step_results):
+                logger.info(f"⏭️ Skipping step: {step.name}")
+                step.status = StepStatus.SKIPPED
+                continue
+                
+            # Execute step
+            step.status = StepStatus.IN_PROGRESS
+            try:
+                result = await step.execute(context, step_results)
+                step.status = result.status
+                step_results.append(result)
+                
+                # Log step execution
+                self.execution_log.append({
+                    "step_number": i,
+                    "step_name": step.name,
+                    "status": result.status.value,
+                    "message": result.message,
+                    "data_keys": list(result.data.keys()) if result.data else []
+                })
+                
+                logger.info(f"✅ Step {i} completed: {result.message}")
+                
+                # Update context with step results
+                context[f"step_{i}_result"] = result.data
+                context["last_result"] = result.data
+                
+                # Check if workflow should stop early
+                if result.should_stop_workflow:
+                    logger.info(f"🛑 Workflow stopped early after step {i}: {result.message}")
+                    break
+                    
+            except Exception as e:
+                logger.error(f"❌ Step {i} failed: {str(e)}")
+                step.status = StepStatus.FAILED
+                step_results.append(StepResult(
+                    status=StepStatus.FAILED,
+                    data={"error": str(e)},
+                    message=f"Step failed with error: {str(e)}"
+                ))
+                break
+        
+        # Generate final workflow result
+        successful_steps = [r for r in step_results if r.is_success()]
+        failed_steps = [r for r in step_results if r.status == StepStatus.FAILED]
+        
+        workflow_result = {
+            "workflow_name": self.workflow_name,
+            "total_steps": len(self.steps),
+            "executed_steps": len(step_results),
+            "successful_steps": len(successful_steps),
+            "failed_steps": len(failed_steps),
+            "execution_log": self.execution_log,
+            "step_results": step_results,
+            "final_context": context
+        }
+        
+        logger.info(f"🏁 Workflow '{self.workflow_name}' completed: {len(successful_steps)}/{len(step_results)} steps successful")
+        return workflow_result
+
+# ===== CODE ANALYSIS WORKFLOW STEPS =====
+
+class StaticAnalysisStep(WorkflowStep):
+    """Step 1: Static code analysis using AutoLinter"""
+    
+    def __init__(self):
+        super().__init__("Static Analysis", "Check for syntax issues, style violations, and obvious problems")
+        
+    async def execute(self, context: Dict[str, Any], previous_results: List[StepResult]) -> StepResult:
+        code = context.get('code', '')
+        if not code.strip():
+            return StepResult(
+                status=StepStatus.FAILED,
+                data={"error": "No code provided"},
+                message="No code found to analyze"
+            )
+        
+        # Use AutoLinter tool
+        linter_tool = LangchainAutoLinterTool()
+        try:
+            # Detect language from code or context
+            language = context.get('language', 'auto')
+            
+            linter_result = await linter_tool._arun(
+                code_content=code,
+                language=language,
+                auto_fix=False
+            )
+            
+            # Parse linter results
+            has_issues = "error" in linter_result.lower() or "warning" in linter_result.lower()
+            
+            return StepResult(
+                status=StepStatus.COMPLETED,
+                data={
+                    "linter_output": linter_result,
+                    "issues_found": has_issues,
+                    "language_detected": language
+                },
+                message=f"Static analysis complete. Issues found: {has_issues}",
+                next_step_recommendations=["focus_on_fixes"] if has_issues else ["proceed_to_architecture"]
+            )
+            
+        except Exception as e:
+            return StepResult(
+                status=StepStatus.FAILED,
+                data={"error": str(e)},
+                message=f"Static analysis failed: {str(e)}"
+            )
+
+class CodeUnderstandingStep(WorkflowStep):
+    """Step 2: Understand code patterns and best practices using RAG"""
+    
+    def __init__(self):
+        super().__init__("Code Understanding", "Query documentation for relevant patterns and best practices")
+        
+    async def execute(self, context: Dict[str, Any], previous_results: List[StepResult]) -> StepResult:
+        # Extract key information from code
+        code = context.get('code', '')
+        language = context.get('language', 'unknown')
+        
+        # Build RAG query based on detected patterns
+        if 'flutter' in code.lower() or 'dart' in code.lower():
+            query = f"Flutter Dart best practices for {self._extract_code_patterns(code)}"
+        else:
+            query = f"{language} best practices for {self._extract_code_patterns(code)}"
+        
+        # Use RAG tool
+        rag_tool = LangchainFlutterDocTool()
+        try:
+            rag_result = await rag_tool._arun(query=query)
+            
+            return StepResult(
+                status=StepStatus.COMPLETED,
+                data={
+                    "documentation_found": rag_result,
+                    "query_used": query,
+                    "patterns_detected": self._extract_code_patterns(code)
+                },
+                message="Code patterns analyzed and documentation retrieved",
+                next_step_recommendations=["apply_best_practices"]
+            )
+            
+        except Exception as e:
+            return StepResult(
+                status=StepStatus.COMPLETED,  # Non-critical failure
+                data={
+                    "error": str(e),
+                    "fallback_analysis": "Using built-in knowledge"
+                },
+                message="RAG query failed, proceeding with built-in knowledge"
+            )
+    
+    def _extract_code_patterns(self, code: str) -> str:
+        """Extract key patterns from code for RAG query"""
+        patterns = []
+        code_lower = code.lower()
+        
+        if 'class' in code_lower and 'extends' in code_lower:
+            patterns.append("class inheritance")
+        if 'async' in code_lower or 'await' in code_lower:
+            patterns.append("async programming")
+        if 'visitor' in code_lower:
+            patterns.append("visitor pattern")
+        if 'factory' in code_lower:
+            patterns.append("factory pattern")
+            
+        return " ".join(patterns) if patterns else "general code structure"
+
+class ArchitectureReviewStep(WorkflowStep):
+    """Step 3: Review architecture and dependencies"""
+    
+    def __init__(self):
+        super().__init__("Architecture Review", "Analyze code structure and dependencies")
+        
+    async def execute(self, context: Dict[str, Any], previous_results: List[StepResult]) -> StepResult:
+        code = context.get('code', '')
+        
+        # Use repository analysis tools if available
+        repo_tool = LangchainRepoExploreTool()
+        try:
+            # Analyze code structure
+            analysis_result = await repo_tool._arun(path=".", analysis_type="structure")
+            
+            return StepResult(
+                status=StepStatus.COMPLETED,
+                data={
+                    "structure_analysis": analysis_result,
+                    "architecture_assessment": self._assess_architecture(code)
+                },
+                message="Architecture analysis completed"
+            )
+            
+        except Exception as e:
+            # Fallback to basic analysis
+            return StepResult(
+                status=StepStatus.COMPLETED,
+                data={
+                    "basic_analysis": self._assess_architecture(code),
+                    "detailed_analysis_failed": str(e)
+                },
+                message="Basic architecture analysis completed (detailed analysis failed)"
+            )
+    
+    def _assess_architecture(self, code: str) -> Dict[str, Any]:
+        """Basic architecture assessment"""
+        assessment = {
+            "complexity": "medium",
+            "patterns_used": [],
+            "potential_issues": []
+        }
+        
+        # Count various metrics
+        lines = code.split('\n')
+        class_count = len([line for line in lines if 'class ' in line])
+        method_count = len([line for line in lines if 'def ' in line or 'void ' in line])
+        
+        if class_count > 5:
+            assessment["complexity"] = "high"
+        elif class_count < 2:
+            assessment["complexity"] = "low"
+            
+        if method_count > class_count * 10:
+            assessment["potential_issues"].append("High method-to-class ratio")
+            
+        return assessment
+
+class PerformanceAnalysisStep(WorkflowStep):
+    """Step 4: Analyze performance and test functionality"""
+    
+    def __init__(self):
+        super().__init__("Performance Analysis", "Test code execution and analyze performance")
+        
+    def should_skip(self, context: Dict[str, Any], previous_results: List[StepResult]) -> bool:
+        # Skip if previous steps found critical syntax errors
+        for result in previous_results:
+            if result.data.get('issues_found') and 'syntax error' in result.message.lower():
+                return True
+        return False
+        
+    async def execute(self, context: Dict[str, Any], previous_results: List[StepResult]) -> StepResult:
+        code = context.get('code', '')
+        
+        # Use sandbox for safe execution testing
+        sandbox_tool = LangchainSandboxExecuteTool()
+        try:
+            # Create a simple test for the code
+            test_result = await sandbox_tool._arun(
+                code_to_run=self._create_basic_test(code),
+                language="python"  # Default, should be detected
+            )
+            
+            return StepResult(
+                status=StepStatus.COMPLETED,
+                data={
+                    "execution_test": test_result,
+                    "performance_metrics": self._extract_performance_metrics(test_result)
+                },
+                message="Performance analysis completed"
+            )
+            
+        except Exception as e:
+            return StepResult(
+                status=StepStatus.COMPLETED,  # Non-critical
+                data={
+                    "execution_failed": str(e),
+                    "static_performance_analysis": self._static_performance_analysis(code)
+                },
+                message="Dynamic testing failed, performed static analysis"
+            )
+    
+    def _create_basic_test(self, code: str) -> str:
+        """Create a basic test for the code"""
+        return f"""
+# Basic functionality test
+{code}
+
+# Test execution
+try:
+    print("Code compilation successful")
+except Exception as e:
+    print(f"Error: {{e}}")
+"""
+    
+    def _extract_performance_metrics(self, test_result: str) -> Dict[str, Any]:
+        """Extract basic performance metrics from test results"""
+        return {
+            "execution_successful": "error" not in test_result.lower(),
+            "output_length": len(test_result),
+            "contains_warnings": "warning" in test_result.lower()
+        }
+    
+    def _static_performance_analysis(self, code: str) -> Dict[str, Any]:
+        """Static performance analysis"""
+        lines = code.split('\n')
+        return {
+            "total_lines": len(lines),
+            "complexity_estimate": "high" if len(lines) > 200 else "medium" if len(lines) > 50 else "low",
+            "nested_loops": code.count('for') + code.count('while'),
+            "recursive_calls": "recursion" if "return " in code and any(func in code for func in ["def ", "function "]) else "none"
+        }
+
+class EnhancementStep(WorkflowStep):
+    """Step 5: Suggest enhancements using memory and web search"""
+    
+    def __init__(self):
+        super().__init__("Enhancement Suggestions", "Generate improvement recommendations")
+        
+    async def execute(self, context: Dict[str, Any], previous_results: List[StepResult]) -> StepResult:
+        # Analyze all previous results to generate targeted enhancements
+        enhancement_data = {
+            "static_analysis_findings": [],
+            "best_practice_suggestions": [],
+            "architecture_improvements": [],
+            "performance_optimizations": []
+        }
+        
+        # Extract findings from previous steps
+        for result in previous_results:
+            if "linter_output" in result.data:
+                enhancement_data["static_analysis_findings"].append(result.data["linter_output"])
+            if "documentation_found" in result.data:
+                enhancement_data["best_practice_suggestions"].append(result.data["documentation_found"])
+            if "structure_analysis" in result.data:
+                enhancement_data["architecture_improvements"].append(result.data["structure_analysis"])
+            if "performance_metrics" in result.data:
+                enhancement_data["performance_optimizations"].append(result.data["performance_metrics"])
+        
+        return StepResult(
+            status=StepStatus.COMPLETED,
+            data=enhancement_data,
+            message="Enhancement analysis completed"
+        )
+
+class FinalReportStep(WorkflowStep):
+    """Step 6: Generate comprehensive analysis report"""
+    
+    def __init__(self):
+        super().__init__("Final Report", "Synthesize all findings into actionable recommendations")
+        
+    async def execute(self, context: Dict[str, Any], previous_results: List[StepResult]) -> StepResult:
+        # Synthesize all previous results
+        report_sections = {
+            "executive_summary": "",
+            "critical_issues": [],
+            "improvement_recommendations": [],
+            "best_practices_to_adopt": [],
+            "next_steps": []
+        }
+        
+        # Analyze each step result
+        critical_issues = []
+        recommendations = []
+        
+        for i, result in enumerate(previous_results, 1):
+            if result.has_issues():
+                critical_issues.extend(result.data.get('errors', []))
+            
+            if result.next_step_recommendations:
+                recommendations.extend(result.next_step_recommendations)
+        
+        report_sections["critical_issues"] = critical_issues
+        report_sections["improvement_recommendations"] = recommendations
+        
+        # Generate executive summary
+        if critical_issues:
+            report_sections["executive_summary"] = f"Analysis found {len(critical_issues)} critical issues requiring immediate attention."
+        else:
+            report_sections["executive_summary"] = "Code analysis completed successfully with recommendations for enhancement."
+        
+        return StepResult(
+            status=StepStatus.COMPLETED,
+            data=report_sections,
+            message="Comprehensive analysis report generated",
+            should_stop_workflow=True  # This is the final step
+        )
+
+# ===== WORKFLOW FACTORY =====
+
+def create_code_analysis_workflow() -> WorkflowEngine:
+    """Create the 6-step code analysis workflow"""
+    workflow = WorkflowEngine("Code Analysis Workflow")
+    
+    # Add steps in sequence
+    workflow.add_step(StaticAnalysisStep())
+    workflow.add_step(CodeUnderstandingStep())
+    workflow.add_step(ArchitectureReviewStep())
+    workflow.add_step(PerformanceAnalysisStep())
+    workflow.add_step(EnhancementStep())
+    workflow.add_step(FinalReportStep())
+    
+    return workflow
+
 class SessionContext:
     """Tracks ongoing session context for intelligent Layer 1 tagging"""
     def __init__(self):
@@ -4688,6 +5150,91 @@ def should_use_sandbox_tools(user_message: str) -> bool:
     
     return False
 
+def should_use_code_analysis_workflow(user_message: str) -> bool:
+    """Determine if the request requires sequential code analysis workflow"""
+    if is_title_generation_request(user_message):
+        return False
+    
+    user_message_lower = user_message.lower()
+    
+    # Check for code analysis keywords
+    analysis_keywords = [
+        "analyze", "examine", "review", "refactor", "suggest improvements",
+        "code analysis", "optimize", "best practices", "clean up",
+        "architecture review", "performance review", "suggestions"
+    ]
+    
+    # Check for code presence (code blocks or file extensions)
+    has_code = ("```" in user_message or 
+                any(ext in user_message_lower for ext in [".py", ".dart", ".js", ".java", ".cpp", ".c", ".go", ".rs"]))
+    
+    # Check for analysis request patterns
+    has_analysis_request = any(keyword in user_message_lower for keyword in analysis_keywords)
+    
+    # Require both code presence and analysis request
+    return has_code and has_analysis_request
+
+def extract_code_from_message(user_message: str) -> Dict[str, Any]:
+    """Extract code and metadata from user message"""
+    context = {
+        "code": "",
+        "language": "auto",
+        "filename": None,
+        "analysis_request": ""
+    }
+    
+    # Extract code blocks
+    if "```" in user_message:
+        # Find first code block
+        start_idx = user_message.find("```")
+        if start_idx != -1:
+            # Check if language is specified
+            newline_after_backticks = user_message.find("\n", start_idx)
+            if newline_after_backticks != -1:
+                potential_lang = user_message[start_idx + 3:newline_after_backticks].strip()
+                if potential_lang and len(potential_lang) < 20:  # Reasonable language name
+                    context["language"] = potential_lang
+                    code_start = newline_after_backticks + 1
+                else:
+                    code_start = start_idx + 3
+            else:
+                code_start = start_idx + 3
+            
+            # Find end of code block
+            end_idx = user_message.find("```", code_start)
+            if end_idx != -1:
+                context["code"] = user_message[code_start:end_idx].strip()
+    
+    # Extract filename if mentioned
+    for ext in [".py", ".dart", ".js", ".java", ".cpp", ".c", ".go", ".rs"]:
+        if ext in user_message:
+            # Find potential filename
+            words = user_message.split()
+            for word in words:
+                if ext in word and not word.startswith("http"):
+                    context["filename"] = word.strip(".,!?\"'")
+                    # Infer language from extension
+                    ext_to_lang = {
+                        ".py": "python", ".dart": "dart", ".js": "javascript",
+                        ".java": "java", ".cpp": "cpp", ".c": "c", 
+                        ".go": "go", ".rs": "rust"
+                    }
+                    context["language"] = ext_to_lang.get(ext, "auto")
+                    break
+    
+    # Extract analysis request type
+    user_message_lower = user_message.lower()
+    if "refactor" in user_message_lower:
+        context["analysis_request"] = "refactor"
+    elif "optimize" in user_message_lower or "performance" in user_message_lower:
+        context["analysis_request"] = "optimize"
+    elif "analyze" in user_message_lower or "examine" in user_message_lower:
+        context["analysis_request"] = "analyze"
+    else:
+        context["analysis_request"] = "general"
+    
+    return context
+
 def strip_thoughts_from_content(content_to_process: str) -> str:
     final_speakable_content = ""
     while True:
@@ -4936,6 +5483,7 @@ async def chat_proxy(request: Request):
         
         # Orchestrator Logic: Decide which tools to use
         is_title_request = is_title_generation_request(last_user_message_content)
+        use_code_analysis_workflow = should_use_code_analysis_workflow(original_user_message)
         use_memory_tools = should_use_memory_tools(last_user_message_content)
         use_rag_tools = should_use_rag_tools(last_user_message_content)
         use_web_search = should_use_web_search(last_user_message_content)
@@ -4949,11 +5497,98 @@ async def chat_proxy(request: Request):
         
         if is_title_request:
             logger.info(f"📝 Orchestrator Decision: Title generation request detected - routing to direct path")
+        elif use_code_analysis_workflow:
+            logger.info(f"🔄 Orchestrator Decision: Code analysis workflow detected - using sequential analysis")
         else:
-            logger.info(f"🧠 Orchestrator Decision: Memory={use_memory_tools}, RAG={use_rag_tools}, WebSearch={use_web_search}, Git={use_git_tools}, GitHub={use_github_tools}, DevWorkflow={use_dev_workflow_tools}, RepoAnalysis={use_repo_analysis_tools}, AutoLinter={use_auto_linter_tools}, Sandbox={use_sandbox_tools}, Agent={use_langchain_agent}")
+            logger.info(f"🧠 Orchestrator Decision: CodeWorkflow={use_code_analysis_workflow}, Memory={use_memory_tools}, RAG={use_rag_tools}, WebSearch={use_web_search}, Git={use_git_tools}, GitHub={use_github_tools}, DevWorkflow={use_dev_workflow_tools}, RepoAnalysis={use_repo_analysis_tools}, AutoLinter={use_auto_linter_tools}, Sandbox={use_sandbox_tools}, Agent={use_langchain_agent}")
         
         request_id_base = int(time.time())
 
+        # CODE ANALYSIS WORKFLOW PATH
+        if use_code_analysis_workflow:
+            logger.info("🔄 Chat Path: Using Sequential Code Analysis Workflow.")
+            
+            # Extract code and context from message
+            code_context = extract_code_from_message(original_user_message)
+            
+            if not code_context["code"].strip():
+                # No code found in code blocks, return error
+                error_msg = "❌ Code analysis requested but no code found in your message. Please include code in ```code``` blocks."
+                return StreamingResponse(
+                    generate_openai_compatible_response(error_msg, requested_model_name),
+                    media_type="text/plain"
+                )
+            
+            # Create and execute workflow
+            workflow = create_code_analysis_workflow()
+            
+            try:
+                # Add user query to context
+                code_context["user_query"] = original_user_message
+                code_context["conversation_context"] = messages if isinstance(messages, list) else []
+                
+                # Execute workflow
+                workflow_result = await workflow.execute(code_context)
+                
+                # Format workflow results into a comprehensive response
+                response_content = f"""# 🔍 Sequential Code Analysis Results
+
+## Executive Summary
+{workflow_result.get('final_context', {}).get('step_6_result', {}).get('executive_summary', 'Analysis completed successfully.')}
+
+## Analysis Steps Completed
+"""
+                
+                # Add step-by-step results
+                for step_log in workflow_result.get('execution_log', []):
+                    status_emoji = "✅" if step_log['status'] == 'completed' else "❌" if step_log['status'] == 'failed' else "⏭️"
+                    response_content += f"{status_emoji} **Step {step_log['step_number']}: {step_log['step_name']}**\n"
+                    response_content += f"   {step_log['message']}\n\n"
+                
+                # Add detailed findings
+                final_context = workflow_result.get('final_context', {})
+                step_6_result = final_context.get('step_6_result', {})
+                
+                if step_6_result.get('critical_issues'):
+                    response_content += "## 🚨 Critical Issues\n"
+                    for issue in step_6_result['critical_issues']:
+                        response_content += f"- {issue}\n"
+                    response_content += "\n"
+                
+                if step_6_result.get('improvement_recommendations'):
+                    response_content += "## 💡 Recommendations\n"
+                    for rec in step_6_result['improvement_recommendations']:
+                        response_content += f"- {rec}\n"
+                    response_content += "\n"
+                
+                # Add static analysis details if available
+                step_1_result = final_context.get('step_1_result', {})
+                if step_1_result.get('linter_output'):
+                    response_content += "## 🔍 Static Analysis Details\n"
+                    response_content += f"```\n{step_1_result['linter_output']}\n```\n\n"
+                
+                # Add workflow summary
+                response_content += f"""## 📊 Workflow Summary
+- **Total Steps**: {workflow_result.get('total_steps', 0)}
+- **Executed Steps**: {workflow_result.get('executed_steps', 0)}
+- **Successful Steps**: {workflow_result.get('successful_steps', 0)}
+- **Failed Steps**: {workflow_result.get('failed_steps', 0)}
+
+*Analysis completed using sequential workflow engine*"""
+                
+                return StreamingResponse(
+                    generate_openai_compatible_response(response_content, requested_model_name),
+                    media_type="text/plain"
+                )
+                
+            except Exception as e:
+                logger.error(f"❌ Code Analysis Workflow Error: {str(e)}")
+                error_msg = f"❌ Code analysis workflow failed: {str(e)}\n\nFalling back to standard agent mode..."
+                
+                # Fall through to normal agent execution as backup
+                use_langchain_agent = True
+                logger.info("🔄 Falling back to standard agent mode after workflow failure")
+        
         if use_langchain_agent:
             logger.info("🤖 Chat Path: Using Langchain Agent with selected tools.")
             agent_llm_model = requested_model_name 
