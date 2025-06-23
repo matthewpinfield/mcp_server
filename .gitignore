@@ -57,6 +57,20 @@ rag/venv/
 rag/lancedb_data/*.lance/data/
 rag/chroma_db_link
 
+# Large database files - runtime data, not source code
+docker_mongo_data/
+lancedb_data/
+*.sqlite3
+*.db
+
+# MongoDB WiredTiger files
+WiredTiger*
+*.wt
+
+# Vector database files
+*.lance
+chroma.sqlite3
+
 # Sensitive files
 *.key
 *.pem

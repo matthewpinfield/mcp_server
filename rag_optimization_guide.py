@@ -87,21 +87,21 @@ class RAGOptimizer:
         
         # Check default model
         default_model = health_data.get("default_model", "")
-        if "qwen3:8b" in default_model:
-            recommendations.append("✓ Using qwen3:8b - balanced speed/quality model")
+        if "llama3.3:70b" in default_model:
+            recommendations.append("✓ Using llama3.3:70b - GPT-4 class model with excellent reasoning")
         
         # Check database status
         if health_data.get("database_available"):
             recommendations.append("✓ Database is available")
         else:
-            recommendations.append("❌ Database unavailable - this will cause failures")
+            recommendations.append(" Database unavailable - this will cause failures")
         
         return recommendations
 
 def print_optimization_guide():
     """Print comprehensive optimization guide"""
     print("""
-🚀 MCP SERVER PERFORMANCE OPTIMIZATION GUIDE
+ MCP SERVER PERFORMANCE OPTIMIZATION GUIDE
 ============================================
 
 PROBLEM ANALYSIS:
@@ -116,24 +116,24 @@ ROOT CAUSES IDENTIFIED:
 
 OPTIMIZATION STRATEGY:
 
-🎯 TIER 1: IMMEDIATE GAINS (Target: <5 seconds)
+ TIER 1: IMMEDIATE GAINS (Target: <5 seconds)
 --------------------------------------------
-✅ Smart Query Routing:
+ Smart Query Routing:
    - Simple queries → Direct Ollama (bypass agent)
    - Flutter/Dart queries → Optimized RAG
    - Complex queries → Full agent (when needed)
 
-✅ Response Caching:
+ Response Caching:
    - Cache common responses in memory
    - 5-minute TTL for development queries
    - Reduces repeated processing
 
-✅ Connection Pooling:
+ Connection Pooling:
    - Persistent HTTP connections
    - Reduced connection overhead
    - Async I/O throughout
 
-🎯 TIER 2: RAG OPTIMIZATION (Target: 10-15 seconds)
+ TIER 2: RAG OPTIMIZATION (Target: 10-15 seconds)
 -------------------------------------------------
 ⚡ RAG Server Optimizations:
    - Use faster embedding models (nomic-embed-text vs sentence-transformers)
@@ -141,12 +141,12 @@ OPTIMIZATION STRATEGY:
    - Add semantic similarity thresholds
    - Cache frequent embeddings
 
-🔄 Parallel Processing:
+ Parallel Processing:
    - Async RAG calls
    - Streaming responses while processing
    - Early acknowledgment to user
 
-🎯 TIER 3: ADVANCED OPTIMIZATION (Target: <3 seconds)
+ TIER 3: ADVANCED OPTIMIZATION (Target: <3 seconds)
 ---------------------------------------------------
 📊 Intelligent Preprocessing:
    - Query complexity analysis
@@ -160,7 +160,7 @@ OPTIMIZATION STRATEGY:
 
 IMPLEMENTATION PRIORITY:
 ======================
-1. ✅ Deploy fast_mcp_server.py (immediate 3-5x improvement)
+1.  Deploy fast_mcp_server.py (immediate 3-5x improvement)
 2. 🔧 RAG server configuration tuning
 3. 📈 Implement advanced caching
 4. 🏁 Fine-tune model parameters
@@ -182,7 +182,7 @@ MONITORING:
 def print_rag_specific_optimizations():
     """Print RAG-specific optimization recommendations"""
     print("""
-📚 RAG SERVER SPECIFIC OPTIMIZATIONS
+ RAG SERVER SPECIFIC OPTIMIZATIONS
 ===================================
 
 CURRENT BOTTLENECKS IN RAG PIPELINE:
@@ -193,7 +193,7 @@ CURRENT BOTTLENECKS IN RAG PIPELINE:
 
 OPTIMIZATION STRATEGIES:
 
-🚀 EMBEDDING OPTIMIZATION:
+ EMBEDDING OPTIMIZATION:
 - Switch to nomic-embed-text (3x faster than sentence-transformers)
 - Pre-compute embeddings for common queries
 - Use batch embedding for multiple queries
@@ -205,7 +205,7 @@ OPTIMIZATION STRATEGIES:
 - Implement query filtering before search
 - Add similarity score thresholds
 
-🎯 LLM SYNTHESIS OPTIMIZATION:
+ LLM SYNTHESIS OPTIMIZATION:
 - Use streaming responses
 - Implement response truncation for long docs
 - Add query-specific prompt templates

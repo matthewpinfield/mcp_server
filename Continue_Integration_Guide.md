@@ -27,7 +27,7 @@ Or use VS Code Command Palette: `Ctrl+Shift+P` → "Continue: Open config.json"
     {
       "title": "Advanced MCP Server with Memory",
       "provider": "openai",
-      "model": "qwen3:8b",
+      "model": "llama3.3:70b",
       "apiKey": "dummy-key",
       "apiBase": "http://localhost:8013/v1",
       "roles": ["chat", "edit", "apply"]
@@ -35,7 +35,7 @@ Or use VS Code Command Palette: `Ctrl+Shift+P` → "Continue: Open config.json"
     {
       "title": "Original MCP Server", 
       "provider": "openai",
-      "model": "qwen3:8b",
+      "model": "llama3.3:70b",
       "apiKey": "dummy-key", 
       "apiBase": "http://localhost:8012/v1",
       "roles": ["chat"]
@@ -144,7 +144,7 @@ curl -X POST http://localhost:8013/memory/stats
 # Test chat endpoint
 curl -X POST http://localhost:8013/v1/chat/completions \
   -H "Content-Type: application/json" \
-  -d '{"model":"qwen3:8b","messages":[{"role":"user","content":"Hello"}]}'
+  -d '{"model":"llama3.3:70b","messages":[{"role":"user","content":"Hello"}]}'
 ```
 
 ## Benefits Over Open WebUI

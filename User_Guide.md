@@ -8,24 +8,13 @@
 ```bash
 cd /mnt/caseSSD/mcp_server_project
 source .venv/bin/activate
-DB_PATH=lancedb_data python3 rag/dual_endpoint_server.py
-
-
-
-
-#### **RAG Server** (Port 8008) 
-```bash
-cd /mnt/caseSSD/mcp_server_project
-source .venv/bin/activate
-DB_PATH=rag/data python3 rag/optimal_server.py
-```
+python3 rag/dual_endpoint_server.py
 
 #### **Main MCP Server** (Port 8013)
 ```bash
 cd /mnt/caseSSD/mcp_server_project
 source .venv/bin/activate
-python3 -m advanced_mcp_server
-```
+python3 main.py
 
 
 ### **Prerequisites**
@@ -37,8 +26,6 @@ python3 -m advanced_mcp_server
 ```bash
 export GITHUB_TOKEN="***REMOVED-GITHUB-TOKEN***"
 ```
-
-## 🔧 **Available Tools & Usage**
 
 ### **Memory & Learning**
 
@@ -233,6 +220,47 @@ Supports: npm, Flutter, Python, Rust, Maven, Gradle, Make, CMake
 - **Tier 3 (ChromaDB)**: Long-term conversation archive on NAS
 - **Correction Learning**: Use `/correct <text>` to teach the AI from mistakes
 - **Personalized Responses**: AI adapts to your preferences and rules automatically
+
+### **Context Window Management & Auto-Compaction**
+- **Dynamic Context Detection**: Automatically detects model context limits from Ollama
+- **Real-time Monitoring**: Shows context usage percentage with every request
+- **Smart Warnings**: Alerts when approaching 75% of context limit
+- **Auto-Compaction**: Automatically triggers at 85% usage to prevent overflows
+- **Conversation Artifacts**: Preserves key information during compaction for seamless agent handoff
+- **Hardware Adaptation**: Automatically adjusts to different hardware setups (CPU vs GPU inference)
+
+#### **Context Monitoring Features**
+```
+🔄 Chat Request: Model='qwen3:30b-a3b ', Msgs=45, Context: 32450/40960 (79.2%)
+⚠️ Context usage at 87.3% - creating artifact and compacting  
+📦 Compacted: 45 → 8 messages, 35720 → 8450 tokens
+```
+
+#### **Artifact Preservation**
+When auto-compaction occurs, the system creates a conversation artifact containing:
+- **Conversation Summary**: Overview of discussion with message counts
+- **Key Decisions**: Recent progress and changes made
+- **Current Context**: User's immediate request and intent
+- **Mentioned Files**: File paths referenced in conversation
+- **Topic Analysis**: Key technical topics discussed
+- **Next Agent Briefing**: Handoff instructions for continued assistance
+
+#### **Configuration Options**
+Set environment variables to customize behavior:
+```bash
+export MAX_CONTEXT_TOKENS=100000     
+export COMPACTION_THRESHOLD=0.85     # Auto-compact at 85% (0.0-1.0)
+export WARNING_THRESHOLD=0.75        # Warning at 75% (0.0-1.0)  
+export ARTIFACT_ENABLED=True         # Enable/disable auto-compaction
+```
+
+``
+
+#### **Manual Context Check**
+Check current context configuration:
+```bash
+curl http://localhost:8013/api/context-status
+```
 
 ### **Error Handling**
 - Graceful handling when Git not installed

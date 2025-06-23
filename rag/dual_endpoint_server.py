@@ -15,11 +15,11 @@ from typing import List, Dict, Any, Optional
 from contextlib import asynccontextmanager
 
 # --- Configuration ---
-DB_PATH = os.getenv("DB_PATH", "../lancedb_data/")
+DB_PATH = os.getenv("DB_PATH", "/opt/mcp/rag/")
 FLUTTER_TABLE = os.getenv("FLUTTER_TABLE", "flutter_dart_knowledge")
 MIXED_TABLE = os.getenv("MIXED_TABLE", "expert_py_flutter_dart_final")
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "nomic-embed-text:latest")
-DEFAULT_LLM_MODEL = os.getenv("DEFAULT_LLM_MODEL", "qwen3:8b")
+DEFAULT_LLM_MODEL = os.getenv("DEFAULT_LLM_MODEL", "qwen3:30b-a3b")
 EMBEDDING_TIMEOUT = int(os.getenv("EMBEDDING_TIMEOUT", "30"))
 LLM_TIMEOUT = int(os.getenv("LLM_TIMEOUT", "30"))
 
@@ -35,30 +35,30 @@ mixed_table = None
 async def lifespan(app: FastAPI):
     # Startup Logic
     global flutter_table, mixed_table
-    logger.info("🚀 Dual Endpoint RAG Service starting up...")
+    logger.info("Dual Endpoint RAG Service starting up...")
     
     try:
         db = lancedb.connect(DB_PATH)
         
         # Connect to Flutter documentation database (5,098 docs - 39.8% official docs)
         flutter_table = db.open_table(FLUTTER_TABLE)
-        logger.info(f"✅ Flutter Docs DB: {len(flutter_table)} docs (official docs + Firebase)")
+        logger.info(f" Flutter Docs DB: {len(flutter_table)} docs (official docs + Firebase)")
         
         # Connect to mixed database (11,663 docs - Python + Flutter code)
         mixed_table = db.open_table(MIXED_TABLE)
-        logger.info(f"✅ Mixed Code DB: {len(mixed_table)} docs (Python + Flutter code)")
+        logger.info(f" Mixed Code DB: {len(mixed_table)} docs (Python + Flutter code)")
         
-        logger.info(f"🎯 Total: {len(flutter_table) + len(mixed_table)} documents")
-        logger.info("📚 Flutter/Dart + Python + Firebase coverage ready")
+        logger.info(f"Total: {len(flutter_table) + len(mixed_table)} documents")
+        logger.info("Flutter/Dart + Python + Firebase coverage ready")
         
     except Exception as e:
-        logger.error(f"❌ FATAL: Database connection failed: {e}")
+        logger.error(f" FATAL: Database connection failed: {e}")
         raise
     
     yield # Application runs
     
     # Shutdown
-    logger.info("🛑 Dual RAG Service shutting down...")
+    logger.info("Dual RAG Service shutting down...")
 
 app = FastAPI(
     title="Dual Endpoint RAG Service",
@@ -81,17 +81,21 @@ async def search_database(table, query: str, limit: int = 5) -> List[Dict]:
         # Search the table
         results = table.search(query_embedding).limit(limit).to_list()
         
-        # Add database source to each result
+        # Convert to consistent format
+        formatted_results = []
         for result in results:
-            result['db_source'] = 'flutter_docs' if table == flutter_table else 'mixed_code'
+            formatted_result = {
+                'text': result.get('text', ''),
+                'metadata': {k: v for k, v in result.items() if k not in ['text', '_distance', 'vector']},
+                'distance': result.get('_distance', 0.0),
+                'db_source': 'flutter_docs' if table == flutter_table else 'mixed_code'
+            }
+            formatted_results.append(formatted_result)
         
-        return results
+        return formatted_results
         
-    except asyncio.TimeoutError:
-        logger.error(f"Embedding timeout after {EMBEDDING_TIMEOUT}s")
-        return []
     except Exception as e:
-        logger.error(f"Search error: {e}")
+        logger.error(f"Database search error: {e}")
         return []
 
 @app.post("/search/docs")
@@ -116,7 +120,7 @@ async def search_flutter_docs(
     if not query.strip():
         raise HTTPException(status_code=400, detail="Query cannot be empty")
     
-    logger.info(f"📚 DOCS Search: '{query}' | Limit: {limit}")
+    logger.info(f"DOCS Search: '{query}' | Limit: {limit}")
     start_time = time.time()
     
     try:
@@ -132,11 +136,11 @@ async def search_flutter_docs(
             "results": results
         }
         
-        logger.info(f"✅ DOCS: {len(results)} results in {search_time:.3f}s")
+        logger.info(f" DOCS: {len(results)} results in {search_time:.3f}s")
         return response
         
     except Exception as e:
-        logger.error(f"❌ Docs search failed: {e}")
+        logger.error(f" Docs search failed: {e}")
         raise HTTPException(status_code=500, detail=f"Documentation search failed: {str(e)}")
 
 @app.post("/search/code")
@@ -161,7 +165,7 @@ async def search_code_examples(
     if not query.strip():
         raise HTTPException(status_code=400, detail="Query cannot be empty")
     
-    logger.info(f"💻 CODE Search: '{query}' | Limit: {limit}")
+    logger.info(f"CODE Search: '{query}' | Limit: {limit}")
     start_time = time.time()
     
     try:
@@ -177,11 +181,11 @@ async def search_code_examples(
             "results": results
         }
         
-        logger.info(f"✅ CODE: {len(results)} results in {search_time:.3f}s")
+        logger.info(f" CODE: {len(results)} results in {search_time:.3f}s")
         return response
         
     except Exception as e:
-        logger.error(f"❌ Code search failed: {e}")
+        logger.error(f" Code search failed: {e}")
         raise HTTPException(status_code=500, detail=f"Code search failed: {str(e)}")
 
 @app.get("/health")
@@ -197,12 +201,12 @@ async def health_check():
             "flutter_docs": {
                 "connected": flutter_table is not None,
                 "documents": flutter_count,
-                "description": "Flutter documentation + Firebase guides"
+                "description": "Flutter documentation + Firebase guides (LanceDB)"
             },
             "mixed_code": {
                 "connected": mixed_table is not None, 
                 "documents": mixed_count,
-                "description": "Python + Flutter code examples"
+                "description": "Python + Flutter code examples (LanceDB)"
             }
         },
         "total_documents": flutter_count + mixed_count,
@@ -310,12 +314,12 @@ async def get_usage_guide():
     }
 
 if __name__ == "__main__":
-    print("🚀 Starting Dual Endpoint RAG Server")
-    print("📚 /search/docs - Flutter Documentation + Firebase")  
-    print("💻 /search/code - Python + Flutter Code Examples")
-    print("🌐 Server: http://0.0.0.0:8008")
-    print("📖 Usage guide: http://0.0.0.0:8008/usage-guide") 
-    print("🔄 Replaces optimal_server.py with dual endpoints")
+    print("Starting Dual Endpoint RAG Server")
+    print("/search/docs - Flutter Documentation + Firebase")  
+    print("/search/code - Python + Flutter Code Examples")
+    print("Server: http://0.0.0.0:8008")
+    print("Usage guide: http://0.0.0.0:8008/usage-guide") 
+    print("Replaces optimal_server.py with dual endpoints")
     
     uvicorn.run(
         app,
