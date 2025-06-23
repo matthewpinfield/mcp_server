@@ -2,53 +2,73 @@
 
 ## RAG SYSTEM DATABASES (M.2 SSD)
 
-### 1. MAIN_RAG_DB (Primary RAG) ✅
+### CURRENT ACTIVE RAG SYSTEM (LanceDB)
+
+### 1. FLUTTER_DART_KNOWLEDGE (Primary Docs) ✅
+- **LOCATION**: `/opt/mcp/rag/flutter_dart_knowledge.lance/`
+- **TYPE**: LanceDB Vector Database
+- **PURPOSE**: Flutter/Dart documentation and API references
+- **ENDPOINT**: `http://localhost:8008/search/docs`
+- **SERVER**: `rag/dual_endpoint_server.py`
+- **STATUS**: Active - Primary documentation search
+
+### 2. EXPERT_PY_FLUTTER_DART_FINAL (Code Examples) ✅
+- **LOCATION**: `/opt/mcp/rag/expert_py_flutter_dart_final.lance/`
+- **TYPE**: LanceDB Vector Database
+- **PURPOSE**: Python, Flutter, and Dart code examples
+- **ENDPOINT**: `http://localhost:8008/search/code`
+- **SERVER**: `rag/dual_endpoint_server.py`
+- **STATUS**: Active - Code example search
+
+### LEGACY RAG SYSTEM (ChromaDB - Superseded)
+
+### 3. MAIN_RAG_DB (Legacy Primary) 🔄
 - **LOCATION**: `/opt/mcp/rag/main_rag.db`
 - **SIZE**: 45.84 MB (48,070,656 bytes)
 - **TYPE**: ChromaDB (SQLite3)
 - **PURPOSE**: Flutter/Dart RAG documentation (7,412 embeddings)
 - **TABLES**: 20 tables including embeddings, embedding_metadata, collections
 - **SAMPLE DATA**: Contains Flutter Riverpod docs, Dart API documentation, StateProvider examples
-- **STATUS**: Active - Used by RAG system for code documentation queries
+- **STATUS**: Superseded by LanceDB system - kept for reference
 
-### 2. FLUTTER_DOCS_DB (Secondary RAG) ✅
+### 4. FLUTTER_DOCS_DB (Legacy Secondary) 🔄
 - **LOCATION**: `/opt/mcp/rag/flutter_docs.db`
 - **SIZE**: 79.50 MB (83,357,696 bytes)
 - **TYPE**: ChromaDB (SQLite3)
 - **PURPOSE**: Flutter-only RAG database
 - **EMBEDDINGS**: 5,098 records
-- **STATUS**: Active RAG system
+- **STATUS**: Superseded by LanceDB system - kept for reference
 
 ## MEMORY SYSTEM DATABASES
 
 ### TIER 1 (Redis - Short-term Memory) ✅
-- **LOCATION**: `/opt/mcp/tier1/memory.rdb` (M.2 SSD)
-- **SIZE**: Minimal
+- **LOCATION**: `localhost:6379` (in-memory + RDB persistence)
 - **TYPE**: Redis in-memory store with persistence
-- **PURPOSE**: Fast short-term conversation context
-- **STATUS**: **WORKING** - Proper MCP location with clean naming
+- **PURPOSE**: Fast short-term conversation context (last 5 interactions)
+- **KEYS**: `context:default_user:interaction_*`
+- **STATUS**: **ACTIVE** - Fast conversation recall confirmed
 
 ### TIER 2 (MongoDB - Permanent Memory) ✅
-- **LOCATION**: `/mnt/caseSSD/mcp_server_data/tier2_mongodb/`
-- **TYPE**: MongoDB
+- **LOCATION**: `/mnt/caseSSD/mcp_server_project/docker_mongo_data/`
+- **TYPE**: MongoDB (Docker container data)
 - **PURPOSE**: Permanent rules/preferences storage
-- **PREVIOUS CONTENT**: Originally contained 36 rules including Bishop identity
-- **STATUS**: **PURGED** - Database dropped during testing
+- **DATABASE**: `mcp_memory`
+- **COLLECTIONS**: `profiles`, `raw_logs`, `correction_logs`
+- **STATUS**: **ACTIVE** - 6 rules stored, rules and profiles working
 
 ### TIER 3a (ChromaDB - SSD Archive) ✅
 - **LOCATION**: `/mnt/caseSSD/mcp_server_data/tier3_memory_db/`
 - **TYPE**: ChromaDB (SQLite3)
-- **PURPOSE**: Recent archived conversations (14+ days from Tier 1)
-- **STATUS**: **READY** - Directory created, awaiting initialization
+- **PURPOSE**: Recent archived conversations (semantic search)
+- **COLLECTION**: `tier3_memory`
+- **STATUS**: **ACTIVE** - 2 archived memories, semantic search working
 
 ### TIER 3b (ChromaDB - NAS Archive) ✅
-- **LOCATION**: `/mnt/my_nas_mcp_share/archives/memory_vector_db/chroma.sqlite3`
-- **SIZE**: 0.16 MB
+- **LOCATION**: `/mnt/my_nas_mcp_share/archives/memory_vector_db/`
 - **TYPE**: ChromaDB (SQLite3)
 - **PURPOSE**: Long-term archived conversations (30+ days from Tier 3a)
-- **COLLECTIONS**: 2 (`long_term_memory`, `nas_archive`)
-- **EMBEDDINGS**: 0 records
-- **STATUS**: Empty - No stored memories
+- **COLLECTION**: `nas_archive`
+- **STATUS**: **AVAILABLE** - NAS accessible, ready for long-term archival
 
 ## UNKNOWN PURPOSE DATABASES
 

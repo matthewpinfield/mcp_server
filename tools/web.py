@@ -75,7 +75,19 @@ class LangchainWebSearchTool(AsyncTool):
     args_schema: Type[BaseModel] = WebSearchSchema
 
     def _run(self, query: str, max_results: int = 3, general_search: bool = False, extended_timeout: bool = False) -> str:
-        logger.info(f"🔍 High-Quality Web Search: query='{query}', max_results={max_results}")
+        # Handle case where LangChain passes parameters via JSON string (same issue as sandbox tool)
+        if isinstance(query, str) and query.startswith('{'):
+            try:
+                import json
+                parsed = json.loads(query)
+                query = parsed.get('query', query)
+                max_results = parsed.get('max_results', max_results)
+                general_search = parsed.get('general_search', general_search)
+                extended_timeout = parsed.get('extended_timeout', extended_timeout)
+            except json.JSONDecodeError:
+                pass  # If parsing fails, use original values
+        
+        logger.info(f"🔍 High-Quality Web Search: query='{query}', max_results={max_results}, extended_timeout={extended_timeout}")
         try:
             # Get initial search results
             search_results = self._get_search_results(query, max_results * 3)
@@ -425,7 +437,7 @@ class LangchainWebSearchTool(AsyncTool):
                 text = '\n'.join(line.strip() for line in text.split('\n') if line.strip())
                 
                 if len(text) > 3000:
-                    text = text[:3000] + "\n\n... (content truncated)"
+                    text = text[:3000] + f"\n\n... (content truncated - showing first 3000 of {len(text)} characters. Ask for more specific information if needed)"
                 
                 tier_indicator = {
                     "tier_1_official": "🏛 **OFFICIAL DOCUMENTATION**",

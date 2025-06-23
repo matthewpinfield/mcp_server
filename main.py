@@ -39,43 +39,35 @@ def check_ollama_status():
 
     # Step 1: Check if the Ollama server is running at all
     try:
-        print(f"Pinging Ollama server at {OLLAMA_API_BASE}...")
-        # Use a longer timeout for the initial connection check
         response = requests.get(OLLAMA_API_BASE, timeout=10) 
         response.raise_for_status() # Raises an exception for bad status codes (4xx or 5xx)
-        print("✅ Ollama server is responding.")
+        print("[ OK ] Ollama server responding")
     except requests.RequestException as e:
-        print("\n❌ CRITICAL ERROR: Ollama server is not running or not reachable.")
-        print(f"   Please ensure 'ollama serve' is active and accessible at {OLLAMA_API_BASE}.")
-        print(f"   Error details: {e}")
-        sys.exit(1) # Exit the script with an error code
+        print("[FAIL] Ollama server not reachable")
+        print(f"       Please ensure 'ollama serve' is active at {OLLAMA_API_BASE}")
+        sys.exit(1)
 
     # Step 2: If the server is running, check if it has the required model
     try:
-        print(f"Checking for required model: '{DEFAULT_MODEL}'...")
         tags_response = requests.get(f"{OLLAMA_API_BASE}/api/tags", timeout=15)
         tags_response.raise_for_status()
         
         models = tags_response.json().get("models", [])
-        # Model names in Ollama can include the tag, e.g., 'qwen3:30b-a3b:latest'
-        # We check if our required model name is a prefix of any available model.
         model_found = any(m.get("name", "").startswith(DEFAULT_MODEL) for m in models)
 
         if model_found:
-            print(f"✅ Required model '{DEFAULT_MODEL}' is available.")
+            print(f"[ OK ] Model '{DEFAULT_MODEL}' available")
         else:
             available_models = [m.get("name") for m in models]
-            print(f"\n❌ CRITICAL ERROR: Ollama server is running, but the required model '{DEFAULT_MODEL}' was not found.")
-            print(f"   Please run 'ollama pull {DEFAULT_MODEL}' to download it.")
-            print(f"   Available models: {available_models if available_models else 'None'}")
+            print(f"[FAIL] Model '{DEFAULT_MODEL}' not found")
+            print(f"       Please run 'ollama pull {DEFAULT_MODEL}' to download it")
             sys.exit(1)
 
     except requests.RequestException as e:
-        print(f"\n❌ CRITICAL ERROR: Could not get model list from Ollama server.")
-        print(f"   Error details: {e}")
+        print("[FAIL] Could not get model list from Ollama server")
         sys.exit(1)
         
-    print("--- Ollama Service OK ---")
+    print("[ OK ] Ollama Service Ready")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -93,7 +85,32 @@ async def lifespan(app: FastAPI):
     executor = ThreadPoolExecutor(max_workers=MAX_WORKERS)
     logger.info(f"Started ThreadPoolExecutor with {MAX_WORKERS} workers")
     
-    logger.info("MCP Server startup complete.")
+    # Check RAG system status
+    try:
+        import requests
+        rag_response = requests.get("http://localhost:8008/health", timeout=5)
+        if rag_response.status_code == 200:
+            logger.info("--- RAG System ---")
+            logger.info("[ OK ] Dual endpoint server accessible")
+        else:
+            logger.warning("[WARN] RAG system not responding")
+    except Exception as e:
+        logger.warning(f"[FAIL] RAG system check failed: {e}")
+    
+    # Check memory system status  
+    try:
+        from tools.knowledge import mcp_get_memory_stats
+        memory_stats = mcp_get_memory_stats()
+        if memory_stats.get('status') == 'success':
+            stats = memory_stats['stats']
+            logger.info("--- Memory System ---")
+            logger.info(f"[ OK ] Tier 1 Redis: {stats.get('redis_status', 'unknown')} ({stats.get('redis_keys', 0)} keys) | Tier 2 MongoDB: {stats.get('mongodb_status', 'unknown')} ({stats.get('mongodb_rules', 0)} rules) | Tier 3 ChromaDB: {stats.get('chromadb_status', 'unknown')} ({stats.get('chromadb_documents', 0)} docs)")
+        else:
+            logger.warning(f"[WARN] Memory system check failed: {memory_stats.get('error', 'Unknown error')}")
+    except Exception as e:
+        logger.error(f"[FAIL] Failed to check memory system status: {e}")
+    
+    logger.info("--- MCP Server startup complete ---")
     
     yield
     

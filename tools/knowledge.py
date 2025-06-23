@@ -33,6 +33,10 @@ import ollama
 import hashlib
 from datetime import datetime, timedelta
 
+# Suppress ChromaDB telemetry logging
+import logging
+logging.getLogger("chromadb.telemetry.product.posthog").setLevel(logging.WARNING)
+
 # Configuration from superceeded/mcp_memory.py
 SSD_BASE_DATA_PATH = "/mnt/caseSSD/mcp_server_data/"
 NAS_BASE_DATA_PATH = "/mnt/my_nas_mcp_share/archives/"
@@ -73,7 +77,7 @@ class MemorySystem:
             self._setup_mongodb()
             self._setup_chromadb_tier3()
             self._setup_chromadb_nas()
-            logger.info("All 4-tier database connections initialized successfully")
+            logger.debug("All 4-tier database connections initialized successfully")
         except Exception as e:
             logger.error(f"Failed to initialize databases: {e}")
             raise
@@ -90,7 +94,7 @@ class MemorySystem:
                 socket_timeout=5
             )
             self.redis_client.ping()
-            logger.info("Redis connection established")
+            logger.debug("Redis connection established")
         except Exception as e:
             logger.warning(f"Redis connection failed: {e} (will use fallback)")
             self.redis_client = None
@@ -105,7 +109,7 @@ class MemorySystem:
             self.mongo_client.admin.command('ping')
             self.mongo_db = self.mongo_client[MONGODB_DATABASE]
             self._setup_mongodb_collections()
-            logger.info("MongoDB connection established")
+            logger.debug("MongoDB connection established")
         except Exception as e:
             logger.warning(f"MongoDB connection failed: {e} (will use fallback)")
             self.mongo_client = None
@@ -160,7 +164,7 @@ class MemorySystem:
             with open(test_file, 'w') as f:
                 f.write(f"connectivity_test_{time.time()}")
             os.remove(test_file)
-            logger.info("NAS online and accessible")
+            logger.debug("NAS online and accessible")
             return True
             
         except OSError as e:
@@ -207,7 +211,7 @@ class MemorySystem:
                 embedding_function=self.embedding_func
             )
             
-            logger.info(f"ChromaDB Tier 3 initialized with {self.tier3_memory.count()} memories")
+            logger.debug(f"ChromaDB Tier 3 initialized with {self.tier3_memory.count()} memories")
         except Exception as e:
             logger.error(f"ChromaDB SSD connection failed: {e}")
             logger.warning("Falling back to in-memory storage for Tier 3")
@@ -232,7 +236,7 @@ class MemorySystem:
                 with open(test_file, 'w') as f:
                     f.write("test")
                 os.remove(test_file)
-                logger.info("NAS write access confirmed")
+                logger.debug("NAS write access confirmed")
             except Exception as e:
                 logger.warning(f"NAS write access failed: {e} - Tier 3b will be read-only")
             
@@ -243,7 +247,7 @@ class MemorySystem:
                 embedding_function=self.embedding_func
             )
             
-            logger.info(f"ChromaDB NAS archive initialized with {self.nas_archive.count()} archived memories")
+            logger.debug(f"ChromaDB NAS archive initialized with {self.nas_archive.count()} archived memories")
         except Exception as e:
             logger.warning(f"ChromaDB NAS connection failed: {e} - long-term archive unavailable")
             self.chroma_nas_client = None
@@ -508,7 +512,7 @@ class MemorySystem:
             else:
                 stats["overall_health"] = "offline"
             
-            logger.info("Memory stats retrieved")
+            logger.debug("Memory stats retrieved")
             return {"status": "success", "stats": stats}
             
         except Exception as e:
@@ -980,21 +984,21 @@ class LangchainMemoryContextTool(AsyncTool):
                 summary += f"• Profile: {len(context.get('profile', {}).get('rules', []))} rules, {len(context.get('profile', {}).get('preferences', {}))} preferences\n"
                 summary += f"• Long-term: {len(context.get('long_term', []))} semantic matches\n\n"
                 
-                # Add recent context (LIMITED)
+                # Add recent context from Tier 1 Redis (FAST)
                 if context.get('short_term'):
-                    summary += "Recent Conversations:\n"
+                    summary += "**Recent Conversations (Tier 1 Redis - Fast):**\n"
                     for item in context['short_term'][-3:]:  # Last 3 interactions
                         summary += f"- {item.get('timestamp', '')}: {len(item.get('messages', []))} messages\n"
                 
-                # Add rules (LIMITED)
+                # Add rules from Tier 2 MongoDB (PERSISTENT)
                 if context.get('profile', {}).get('rules'):
-                    summary += f"\nActive Rules ({len(context['profile']['rules'])}):\n"
+                    summary += f"\n**Active Rules (Tier 2 MongoDB - Persistent):** ({len(context['profile']['rules'])})\n"
                     for rule in context['profile']['rules'][-5:]:  # Last 5 rules
                         summary += f"- [{rule.get('category', 'general')}] {rule.get('rule', '')}\n"
                 
-                # Add semantic results (LIMITED)
+                # Add semantic results from Tier 3 ChromaDB (SLOW - only when needed)
                 if context.get('long_term'):
-                    summary += f"\nRelevant Past Context:\n"
+                    summary += f"\n**Semantic Search Results (Tier 3 ChromaDB - Slow):**\n"
                     for item in context['long_term'][:3]:  # Top 3 matches
                         summary += f"- (relevance: {item.get('relevance_score', 0):.2f}) {item.get('content', '')[:100]}...\n"
                 

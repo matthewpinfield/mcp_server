@@ -606,6 +606,7 @@ async def chat_proxy(request: Request):
                     agent=agent,
                     tools=tools,
                     verbose=True,
+                    return_intermediate_steps=True,
                     handle_parsing_errors="Check messages and try to recover, or output the parsing error directly to the user."
                 )
                 
@@ -623,6 +624,19 @@ async def chat_proxy(request: Request):
                 logger.info(f"🤖 Invoking ReAct agent for query: '{user_message}'")
                 result = await agent_executor.ainvoke(agent_input_data)
                 agent_response = result.get("output", "[Agent did not return a final answer.]")
+                
+                # Include full tool execution details for debugging tools like sandbox
+                intermediate_steps = result.get("intermediate_steps", [])
+                if intermediate_steps:
+                    tool_details = "\n\n**Tool Execution Details:**\n"
+                    for i, (action, observation) in enumerate(intermediate_steps):
+                        tool_name = getattr(action, 'tool', 'unknown_tool')
+                        tool_input = getattr(action, 'tool_input', 'unknown_input')
+                        tool_details += f"\n🔧 **{tool_name}** execution:\n"
+                        tool_details += f"Input: {tool_input}\n"
+                        tool_details += f"Full Output: {observation}\n"
+                    agent_response += tool_details
+                
                 logger.info(f"🤖 Agent completed. Response length: {len(agent_response)}")
                 
                 if stream:
