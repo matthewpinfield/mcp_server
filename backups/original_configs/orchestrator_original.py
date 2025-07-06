@@ -7,49 +7,19 @@ Contains the should_use_* functions and primary routing logic
 from typing import Dict, Any, List
 import logging
 import asyncio
-from langchain_ollama import ChatOllama
-from langchain_core.messages import HumanMessage, AIMessage, BaseMessage, SystemMessage
+from langchain_community.chat_models import ChatOllama
+from langchain_core.messages import HumanMessage, AIMessage
 from langchain.agents import AgentExecutor, create_react_agent
 from langchain import hub
-from langchain_core.language_models import BaseChatModel
-from langchain_core.outputs import ChatResult
 
 from config import (
     MEMORY_KEYWORDS, RAG_KEYWORDS, WEB_SEARCH_KEYWORDS, GIT_KEYWORDS,
     GITHUB_KEYWORDS, DEV_WORKFLOW_KEYWORDS, PACKAGE_SEARCH_KEYWORDS, BUILD_COMMAND_KEYWORDS,
     REPO_ANALYSIS_KEYWORDS, AUTO_LINTER_KEYWORDS, SANDBOX_KEYWORDS,
-    CALCULATION_KEYWORDS, OLLAMA_API_BASE, DEFAULT_MODEL,
-    # MVP Optimization imports
-    ENABLE_DYNAMIC_SCALING, RAG_RESULTS_SIMPLE, RAG_RESULTS_COMPLEX, RAG_RESULTS_RESEARCH,
-    WEB_SEARCH_SIMPLE_QUERIES, WEB_SEARCH_COMPLEX_QUERIES, WEB_SEARCH_RESEARCH_QUERIES
+    CALCULATION_KEYWORDS, OLLAMA_API_BASE, DEFAULT_MODEL
 )
 
 logger = logging.getLogger(__name__)
-
-def get_model_temperature(model_name: str) -> float:
-    """Get appropriate temperature for model type"""
-    if "qwen" in model_name.lower() or "r1" in model_name.lower():
-        return 0.7  # Higher temperature for thinking models
-    else:
-        return 0.1  # Lower temperature for standard models
-
-def strip_thoughts_from_content(content_to_process: str) -> str:
-    """Strip <think></think> blocks from Qwen3 output to prevent ReAct parsing errors"""
-    final_speakable_content = ""
-    while True:
-        start_think_idx = content_to_process.find('<think>')
-        end_think_idx = content_to_process.find('</think>')
-        if start_think_idx != -1 and end_think_idx != -1 and start_think_idx < end_think_idx:
-            final_speakable_content += content_to_process[:start_think_idx]
-            content_to_process = content_to_process[end_think_idx + len('</think>'):]
-        elif start_think_idx != -1 and end_think_idx == -1 and len(content_to_process) > start_think_idx + 7: 
-            final_speakable_content += content_to_process[:start_think_idx]
-            break
-        else: 
-            final_speakable_content += content_to_process
-            break
-    return final_speakable_content.strip()
-
 
 def is_title_generation_request(user_message: str) -> bool:
     """Check if the request is for title generation (should skip most tools)"""
@@ -67,7 +37,7 @@ async def analyze_complexity(user_message: str) -> bool:
         complexity_llm = ChatOllama(
             model=DEFAULT_MODEL,
             base_url=OLLAMA_API_BASE,
-            temperature=get_model_temperature(DEFAULT_MODEL)
+            temperature=0.1
         )
         
         # Craft analysis prompt
@@ -75,30 +45,12 @@ async def analyze_complexity(user_message: str) -> bool:
 
 User message: "{user_message}"
 
-Examples of NO deep thinking (simple responses):
-- "hi", "hello", "hey", "thanks", "thank you", "ok", "okay", "yes", "no", "bye"
-- "good morning", "good afternoon", "good evening", "how are you", "fine", "great"
-- "what time is it?", "what's the date?", "what day is it?"
-- "nice", "cool", "awesome", "perfect", "sure", "exactly", "right"
-- "I understand", "got it", "makes sense", "agreed", "correct"
-- "please", "sorry", "excuse me", "pardon", "welcome"
-- Simple acknowledgments and basic social interactions
-
-Examples of YES deep thinking (complex analysis):
-- "how does state management work?", "explain dependency injection"
-- "debug this error", "why is my code not working?", "fix this bug"
-- "create a function that...", "write code to...", "implement this feature"
-- "refactor this code", "optimize this algorithm", "improve performance"
-- "what's the difference between X and Y?", "compare these approaches"
-- "how to implement...", "best practices for...", "recommended approach"
-- "explain how this works", "walk me through this", "break this down"
-- "analyze this code", "review my implementation", "check for issues"
-- "design a system", "architect a solution", "plan this project"
-- "troubleshoot this problem", "investigate this issue", "diagnose the error"
-- "what are the pros and cons", "evaluate these options", "which is better"
-- "how do I solve...", "help me figure out...", "guide me through..."
-- Technical programming questions, coding problems, debugging, explanations
-- Multi-step tasks, analysis, problem-solving, learning concepts
+Consider:
+- Simple greetings/responses (hi, thanks, ok) = NO deep thinking
+- Complex questions requiring analysis/explanation = YES deep thinking  
+- Coding problems, debugging, explanations = YES deep thinking
+- Quick factual questions = NO deep thinking
+- Multi-step tasks = YES deep thinking
 
 Respond with only: YES or NO"""
 
@@ -134,105 +86,6 @@ def is_simple_greeting_or_response(user_message: str) -> bool:
     # Only exact matches for most common responses
     simple_exact = ['hi', 'hey', 'ok', 'yes', 'no', 'bye', 'thanks']
     return user_message_lower in simple_exact
-
-async def determine_query_complexity_with_llm(user_message: str) -> str:
-    """Use LLM intelligence to determine appropriate data scaling level"""
-    if not ENABLE_DYNAMIC_SCALING:
-        return "standard"
-    
-    # Quick check for obvious simple cases
-    if is_simple_greeting_or_response(user_message):
-        return "simple"
-    
-    try:
-        # Use LLM to intelligently assess data needs
-        complexity_llm = ChatOllama(
-            model=DEFAULT_MODEL,
-            base_url=OLLAMA_API_BASE,
-            temperature=get_model_temperature(DEFAULT_MODEL)
-        )
-        
-        analysis_prompt = f"""Analyze this query and determine how much context/data would be helpful:
-
-Query: "{user_message}"
-
-Choose the appropriate data level:
-- SIMPLE: Basic greeting, yes/no, minimal data needed
-- STANDARD: Normal questions, moderate context helpful  
-- COMPLEX: Technical problems, debugging, implementation - needs substantial context
-- RESEARCH: Architecture, design patterns, comprehensive explanations - needs maximum context
-
-Respond with only one word: SIMPLE, STANDARD, COMPLEX, or RESEARCH"""
-
-        response = await complexity_llm.ainvoke([HumanMessage(content=analysis_prompt)])
-        raw_response = response.content.strip()
-        
-        # Extract final answer (handle both case variations)
-        if "</think>" in raw_response.lower():
-            # Find the last thinking block end (case insensitive)
-            import re
-            thinking_pattern = r'</think>'
-            matches = list(re.finditer(thinking_pattern, raw_response, re.IGNORECASE))
-            if matches:
-                last_match = matches[-1]
-                analysis = raw_response[last_match.end():].strip().upper()
-            else:
-                analysis = raw_response.upper()
-        else:
-            analysis = raw_response.upper()
-        
-        # Map response to our complexity levels
-        if "SIMPLE" in analysis:
-            return "simple"
-        elif "COMPLEX" in analysis:
-            return "complex" 
-        elif "RESEARCH" in analysis:
-            return "research"
-        else:
-            return "standard"
-            
-    except Exception as e:
-        logger.warning(f"LLM complexity analysis failed: {e}, using standard")
-        return "standard"
-
-def get_dynamic_limits(complexity_level: str) -> Dict[str, int]:
-    """Get dynamic limits based on query complexity"""
-    if not ENABLE_DYNAMIC_SCALING:
-        return {
-            "rag_results": 5,
-            "web_results": 5,
-            "tier1_interactions": 5,
-            "tier3_semantic": 5
-        }
-    
-    limits = {
-        "simple": {
-            "rag_results": RAG_RESULTS_SIMPLE,
-            "web_results": WEB_SEARCH_SIMPLE_QUERIES,
-            "tier1_interactions": 3,
-            "tier3_semantic": 3
-        },
-        "standard": {
-            "rag_results": 5,  # Original default
-            "web_results": 5,  # Original default
-            "tier1_interactions": 5,
-            "tier3_semantic": 5
-        },
-        "complex": {
-            "rag_results": RAG_RESULTS_COMPLEX,
-            "web_results": WEB_SEARCH_COMPLEX_QUERIES,
-            "tier1_interactions": 8,
-            "tier3_semantic": 8
-        },
-        "research": {
-            "rag_results": RAG_RESULTS_RESEARCH,
-            "web_results": WEB_SEARCH_RESEARCH_QUERIES,
-            "tier1_interactions": 8,
-            "tier3_semantic": 8
-        }
-    }
-    
-    return limits.get(complexity_level, limits["standard"])
 
 def should_use_memory_tools(user_message: str) -> bool:
     """Determine if memory tools should be made available to the agent"""
@@ -491,16 +344,12 @@ async def execute_agent_request(messages: List[Dict], user_message: str, request
                 "github_releases": LangchainGitHubReleasesTool
             }
 
-        # Set up base LLM with appropriate temperature for model type
-        # Thinking models (like Qwen3) need higher temperature for diverse reasoning
-        base_llm = ChatOllama(
+        # Set up LLM
+        llm = ChatOllama(
             model=requested_model_name,
             base_url=OLLAMA_API_BASE,
-            temperature=get_model_temperature(requested_model_name)
+            temperature=0.1
         )
-        
-        # Use base LLM directly
-        llm = base_llm
         
         # Build tool list conditionally
         tools = []
@@ -596,8 +445,11 @@ async def execute_agent_request(messages: List[Dict], user_message: str, request
         except Exception as e:
             logger.error(f"Memory context retrieval error: {e}")
         
-        # Create ReAct agent 
+        # Create ReAct agent with system message instead of prompt modification
         llm_with_system = llm
+        if memory_context:
+            # Prepend memory context to LLM calls
+            llm_with_system = llm.bind(system=memory_context)
         
         # Create agent with tools using system-enhanced LLM
         agent = create_react_agent(llm_with_system, tools, base_prompt)
@@ -606,7 +458,7 @@ async def execute_agent_request(messages: List[Dict], user_message: str, request
             tools=tools,
             verbose=True,
             return_intermediate_steps=True,
-            handle_parsing_errors=True
+            handle_parsing_errors="Check messages and try to recover, or output the parsing error directly to the user."
         )
         
         # Execute agent asynchronously
@@ -640,15 +492,17 @@ async def execute_agent_request(messages: List[Dict], user_message: str, request
         
         logger.info(f"🤖 Agent completed. Response length: {len(agent_response)}")
         
-        # Save every interaction to Tier 1 (Redis) per engineering plan
+        # Save the interaction to memory automatically
         try:
             from tools.knowledge import mcp_save_interaction
             interaction_messages = messages + [{"role": "assistant", "content": agent_response}]
             save_result = mcp_save_interaction(interaction_messages, {"type": "agent_conversation"})
-            if save_result.get("status") != "success":
-                logger.warning(f"Failed to save interaction: {save_result.get('error')}")
+            if save_result.get("status") == "success":
+                logger.info(f"💾 Interaction automatically saved to memory: {save_result.get('interaction_id')}")
+            else:
+                logger.warning(f"Failed to auto-save interaction: {save_result.get('error')}")
         except Exception as e:
-            logger.error(f"Memory save error: {e}")
+            logger.error(f"Memory auto-save error: {e}")
         
         return agent_response
         

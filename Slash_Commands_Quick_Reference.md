@@ -10,7 +10,6 @@
 | `/remember <info>` | Save information | `/remember Uses Firebase auth` |
 | `/recall <query>` | Retrieve information | `/recall Firebase` |
 | `/forget <query>` | Remove information | `/forget old settings` |
-| `/stats` | Show memory stats | `/stats` |
 
 ## 🔧 Development (3 commands)
 | Command | Purpose | Example |

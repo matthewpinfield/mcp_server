@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Chat API endpoint for Advanced MCP Server
-Main chat_proxy endpoint and related streaming functions
+Chat API endpoint for Advanced MCP Server - Version 2
+Main chat_proxy endpoint with simplified Qwen3 integration
 """
 
 import json
@@ -19,12 +19,11 @@ from langchain_core.messages import HumanMessage, AIMessage
 from langchain.agents import AgentExecutor, create_react_agent
 from langchain import hub
 
-from core.orchestrator import (
+from core.orchestrator_v2 import (
     get_tool_recommendations,
     get_workflow_recommendations,
-    should_use_naming_conventions,
-    should_use_refactor_workflow,
-    should_use_test_workflow
+    analyze_complexity,
+    execute_agent_request
 )
 
 from config import (
@@ -152,14 +151,13 @@ async def chat_proxy(request: Request):
         workflow_recommendations = get_workflow_recommendations(user_message)
         
         # Use intelligent complexity analysis to determine thinking mode
-        from core.orchestrator import is_title_generation_request
+        from core.orchestrator_v2 import is_title_generation_request
         
         # Skip complex analysis for obvious title generation requests
         if is_title_generation_request(user_message):
             needs_thinking = False
         else:
             # Use actual complexity analysis instead of defaulting to True
-            from core.orchestrator import analyze_complexity
             needs_thinking = await analyze_complexity(user_message)
         
         # Add thinking mode prefix to user message
@@ -180,7 +178,6 @@ async def chat_proxy(request: Request):
         
         # Execute agent request via orchestrator (unified path)
         try:
-            from core.orchestrator import execute_agent_request
             agent_response = await execute_agent_request(modified_messages, modified_user_message, requested_model_name, tool_recommendations)
             
             if stream:

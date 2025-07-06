@@ -1,0 +1,45 @@
+--- Verifying Ollama Service ---
+[ OK ] Ollama server responding
+[ OK ] Model 'qwen3:30b-a3b' available
+[ OK ] Ollama Service Ready
+INFO:     Started server process [99656]
+INFO:     Waiting for application startup.
+2025-06-24 09:50:48,096 - main - INFO - Started ThreadPoolExecutor with 3 workers
+2025-06-24 09:50:48,098 - main - INFO - --- RAG System ---
+2025-06-24 09:50:48,098 - main - INFO - [ OK ] Dual endpoint server accessible
+2025-06-24 09:50:48,339 - main - INFO - --- Memory System ---
+2025-06-24 09:50:48,339 - main - INFO - [ OK ] Tier 1 Redis: connected (6 keys) | Tier 2 MongoDB: connected (4 rules) | Tier 3 ChromaDB: connected (6 docs)
+2025-06-24 09:50:48,339 - main - INFO - --- MCP Server startup complete ---
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8013 (Press CTRL+C to quit)
+2025-06-24 09:51:29,489 - api.chat - INFO - Chat Request: Model='qwen3:30b-a3b', Msgs=16
+2025-06-24 09:51:29,489 - tools.knowledge - INFO - Memory Context Tool: query='custom_slash_commands', include_long_term=True
+2025-06-24 09:51:29,519 - httpx - INFO - HTTP Request: POST http://127.0.0.1:11434/api/embeddings "HTTP/1.1 200 OK"
+2025-06-24 09:51:29,763 - tools.knowledge - INFO - Context retrieved: 5 recent, 5 semantic
+INFO:     127.0.0.1:48654 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+2025-06-24 09:52:23,823 - api.chat - INFO - Chat Request: Model='qwen3:30b-a3b', Msgs=2
+/mnt/caseSSD/mcp_server_project/core/orchestrator.py:40: LangChainDeprecationWarning: The class `ChatOllama` was deprecated in LangChain 0.3.1 and will be removed in 1.0.0. An updated version of the class exists in the :class:`~langchain-ollama package and should be used instead. To use it run `pip install -U :class:`~langchain-ollama` and import as `from :class:`~langchain_ollama import ChatOllama``.
+  complexity_llm = ChatOllama(
+2025-06-24 09:52:30,239 - core.orchestrator - INFO - 🧠 Complexity analysis for 'hello bishop': SIMPLE
+2025-06-24 09:52:30,239 - api.chat - INFO - 🧠 Using /nothink mode for: 'hello bishop'
+2025-06-24 09:52:30,239 - api.chat - INFO - 💡 Tool recommendations: {'memory': True, 'rag': False, 'web_search': True, 'git': False, 'github': False, 'dev_workflow': False, 'repo_analysis': False, 'auto_linter': False, 'sandbox': False}
+2025-06-24 09:52:30,239 - api.chat - INFO - 🔄 Workflow recommendations: {'naming_conventions': False, 'refactor': False, 'test': False}
+2025-06-24 09:52:30,239 - core.orchestrator - INFO - 🧠 Added memory tools to agent
+2025-06-24 09:52:30,239 - core.orchestrator - INFO - 🔍 Added web search tool to agent
+/mnt/caseSSD/mcp_server_project/.venv/lib/python3.12/site-packages/langsmith/client.py:272: LangSmithMissingAPIKeyWarning: API key must be provided when using hosted LangSmith API
+  warnings.warn(
+2025-06-24 09:52:30,477 - tools.knowledge - INFO - Context retrieved: 5 recent, 0 semantic
+2025-06-24 09:52:30,478 - core.orchestrator - INFO - 🤖 Invoking ReAct agent for query: '/nothink hello bishop'
+
+
+> Entering new AgentExecutor chain...
+Check messages and try to recover, or output the parsing error directly to the user.Check messages and try to recover, or output the parsing error directly to the user.Check messages and try to recover, or output the parsing error directly to the user.Check messages and try to recover, or output the parsing error directly to the user.Check messages and try to recover, or output the parsing error directly to the user.Check messages and try to recover, or output the parsing error directly to the user.Check messages and try to recover, or output the parsing error directly to the user.Check messages and try to recover, or output the parsing error directly to the user.Check messages and try to recover, or output the parsing error directly to the user.Check messages and try to recover, or output the parsing error directly to the user.Check messages and try to recover, or output the parsing error directly to the user.Check messages and try to recover, or output the parsing error directly to the user.Check messages and try to recover, or output the parsing error directly to the user.Check messages and try to recover, or output the parsing error directly to the user.Check messages and try to recover, or output the parsing error directly to the user.
+
+> Finished chain.
+2025-06-24 09:52:32,630 - core.orchestrator - INFO - 🤖 Agent completed. Response length: 51
+2025-06-24 09:52:32,630 - tools.knowledge - INFO - Saved to Tier 1 (Redis) for 14-day migration: interaction_1750755152.630124
+2025-06-24 09:52:32,631 - tools.knowledge - INFO - Interaction saved: interaction_1750755152.630124
+2025-06-24 09:52:32,631 - core.orchestrator - INFO - 💾 Interaction automatically saved to memory: interaction_1750755152.630124
+INFO:     127.0.0.1:53656 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+
+

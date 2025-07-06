@@ -376,15 +376,48 @@ class MemorySystem:
             self.nas_archive = None
     
     def save_interaction(self, messages: List[Dict], tags: Optional[Dict] = None) -> Dict:
-        """Core memory write operation - saves conversation to Tier 1 (Redis) only as per architecture"""
+        """Core memory write operation - saves interaction to all 3 tiers"""
         try:
             timestamp = datetime.now()
             interaction_id = f"interaction_{timestamp.timestamp()}"
             
-            # Prepare conversation text for semantic storage during migration
+            interaction_data = {
+                "id": interaction_id,
+                "timestamp": timestamp,
+                "messages": messages,
+                "tags": tags or {},
+                "user_id": DEFAULT_USER
+            }
+            
+            results = {}
+            
+            # Tier 1: Save to Redis (short-term context)
+            if self.redis_client is not None:
+                redis_key = f"context:{DEFAULT_USER}:{interaction_id}"
+                self.redis_client.setex(
+                    redis_key,
+                    timedelta(days=ARCHIVE_AFTER_DAYS),
+                    json.dumps(interaction_data, default=str)
+                )
+                results["redis"] = redis_key
+            else:
+                results["redis"] = "unavailable"
+            
+            # Tier 2: Save to MongoDB (raw logs for archival)
+            if self.mongo_db is not None:
+                log_doc = {
+                    **interaction_data,
+                    "timestamp": timestamp,
+                    "archived": False
+                }
+                mongo_result = self.mongo_db.raw_logs.insert_one(log_doc)
+                results["mongodb"] = str(mongo_result.inserted_id)
+            else:
+                results["mongodb"] = "unavailable"
+            
+            # Tier 3: Save to ChromaDB (semantic search)
             conversation_text = self._format_messages_for_search(messages)
             
-            # Prepare metadata for migration to Tier 3
             metadata = {
                 "timestamp": timestamp.isoformat(),
                 "user_id": DEFAULT_USER,
@@ -394,25 +427,30 @@ class MemorySystem:
             if tags:
                 metadata.update(tags)
             
-            # TIER 1 ONLY: Save to Redis with 14-day TTL for migration
+            # Save to Tier 1 (Redis) first - proper memory flow
             if self.redis_client is not None:
+                # Store in Redis with expiration for 14-day migration
                 conversation_data = {
                     "text": conversation_text,
                     "metadata": metadata,
-                    "messages": messages,  # Keep original messages for context retrieval
                     "timestamp": timestamp.isoformat()
                 }
                 self.redis_client.setex(
                     f"interaction:{interaction_id}",
                     86400 * 14,  # 14 days in seconds
-                    json.dumps(conversation_data, default=str)
+                    json.dumps(conversation_data)
                 )
+                results["tier1_redis"] = interaction_id
                 logger.info(f"Saved to Tier 1 (Redis) for 14-day migration: {interaction_id}")
-                return {"status": "success", "interaction_id": interaction_id, "tier": "redis"}
             else:
-                logger.error("Redis (Tier 1) not available - conversation not saved")
-                return {"status": "error", "error": "Redis unavailable"}
+                results["tier1_redis"] = "unavailable"
+                logger.warning("Redis (Tier 1) not available - conversation not saved properly")
                 
+            # Do NOT save directly to Tier 3 - this violates the 14-day flow
+            
+            logger.info(f"Interaction saved: {interaction_id}")
+            return {"status": "success", "interaction_id": interaction_id, "results": results}
+            
         except Exception as e:
             logger.error(f"Failed to save interaction: {e}")
             return {"status": "error", "error": str(e)}

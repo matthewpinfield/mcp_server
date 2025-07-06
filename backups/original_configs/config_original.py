@@ -46,14 +46,7 @@ PROGRAMMING_DOMAINS = ["api", "backend", "frontend", "mobile", "web", "database"
 
 # Web search configuration
 WEB_SEARCH_KEYWORDS = ["search", "look up", "find information", "what's new", "latest", "recent", "news", "current", "today", "2024", "2025", "google", "web search", "online"]
-
-# Dynamic Web Search Configuration (MVP Optimization)
-WEB_SEARCH_MAX_RESULTS = 5  # Legacy default - kept for compatibility
-WEB_SEARCH_SIMPLE_QUERIES = 3   # Simple questions
-WEB_SEARCH_COMPLEX_QUERIES = 8  # Technical/debugging queries  
-WEB_SEARCH_RESEARCH_QUERIES = 12 # Deep research queries
-WEB_SEARCH_TIMEOUT_OPTIMIZED = 45  # Reduced from 60s
-WEB_CONTENT_LENGTH_ENHANCED = 1200  # Increased from 800 chars
+WEB_SEARCH_MAX_RESULTS = 5
 
 # Git/GitHub configuration
 GIT_KEYWORDS = ["git", "commit", "push", "pull", "branch", "merge", "checkout", "status", "diff", "log", "clone", "repository", "repo"]
@@ -73,24 +66,6 @@ AUTO_LINTER_KEYWORDS = ["lint", "analyze code", "flutter analyze", "dart fix", "
 # Sandbox configuration
 SANDBOX_KEYWORDS = ["run code", "execute", "test code", "debug", "verify", "check output", "sandbox", "python", "calculate", "what does this code do", "run this", "execute this"]
 CALCULATION_KEYWORDS = ["calculate", "compute", "math", "mathematics", "solve", "equation", "formula", "sum", "average", "statistics"]
-
-# --- Dynamic RAG Configuration (MVP Optimization) ---
-RAG_RESULTS_SIMPLE = 3      # Basic queries (greetings, simple questions)
-RAG_RESULTS_STANDARD = 5    # Current default - maintained for compatibility
-RAG_RESULTS_COMPLEX = 8     # Technical/debugging queries
-RAG_RESULTS_RESEARCH = 15   # Deep research, architecture questions
-RAG_CONTENT_LENGTH_ENHANCED = 1200  # Increased from 800 chars
-
-# --- Enhanced Memory Configuration (MVP Optimization) ---
-TIER1_INTERACTIONS_ENHANCED = 8     # Increased from 5
-TIER2_RULES_ACTIVE_ENHANCED = 15    # Increased from 10
-TIER3_SEMANTIC_ENHANCED = 8         # Increased from 5
-MEMORY_CONTEXT_LENGTH_ENHANCED = 200 # Increased from 150 chars
-
-# --- Safe Fallback Configuration ---
-ENABLE_DYNAMIC_SCALING = True       # Set to False to revert to original limits
-AGENT_RESPONSE_TIMEOUT_WARNING = 25  # Warn if response takes >25s
-CONTEXT_SIZE_WARNING_THRESHOLD = 20000  # Warn if context >20k chars
 
 # --- Slash Commands Configuration ---
 DEFAULT_SLASH_COMMANDS = {

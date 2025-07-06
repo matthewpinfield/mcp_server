@@ -1,6 +1,10 @@
 1
 Performance vs Practicality: A Comparison of vLLM and Ollama
-vLLM is designed for high-throughput scenarios, while Ollama emphasizes day-to-day simplicity and good-enough performance for most use cases.
+
+Bishop this is an aticle from aw website on hpw to run convert to vLLM to help increase speed. 
+
+
+"vLLM is designed for high-throughput scenarios, while Ollama emphasizes day-to-day simplicity and good-enough performance for most use cases.
 Robert McDermott
 Follow
 14 min read
@@ -609,4 +613,4 @@ After reading the vLLM documentation, I became aware that in addition to multi-G
 ray
 ”
 for horizontal scaling. I may experiment with that in the future.
-(.venv) matthewpinfield@matthewpinfield-System-Product-Name:/mnt/caseSSD/mcp_server_project$ 
+(.venv) matthewpinfield@matthewpinfield-System-Product-Name:/mnt/caseSSD/mcp_server_project$ "

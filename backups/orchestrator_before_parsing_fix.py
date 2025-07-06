@@ -606,7 +606,7 @@ async def execute_agent_request(messages: List[Dict], user_message: str, request
             tools=tools,
             verbose=True,
             return_intermediate_steps=True,
-            handle_parsing_errors=True
+            handle_parsing_errors="Check messages and try to recover, or output the parsing error directly to the user."
         )
         
         # Execute agent asynchronously
@@ -640,15 +640,17 @@ async def execute_agent_request(messages: List[Dict], user_message: str, request
         
         logger.info(f"🤖 Agent completed. Response length: {len(agent_response)}")
         
-        # Save every interaction to Tier 1 (Redis) per engineering plan
+        # Save the interaction to memory automatically
         try:
             from tools.knowledge import mcp_save_interaction
             interaction_messages = messages + [{"role": "assistant", "content": agent_response}]
             save_result = mcp_save_interaction(interaction_messages, {"type": "agent_conversation"})
-            if save_result.get("status") != "success":
-                logger.warning(f"Failed to save interaction: {save_result.get('error')}")
+            if save_result.get("status") == "success":
+                logger.info(f"💾 Interaction automatically saved to memory: {save_result.get('interaction_id')}")
+            else:
+                logger.warning(f"Failed to auto-save interaction: {save_result.get('error')}")
         except Exception as e:
-            logger.error(f"Memory save error: {e}")
+            logger.error(f"Memory auto-save error: {e}")
         
         return agent_response
         
