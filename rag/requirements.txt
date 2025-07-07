@@ -1,0 +1,6 @@
+beautifulsoup4
+chromadb
+GitPython
+ollama
+Scrapy
+Twisted

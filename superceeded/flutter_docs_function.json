@@ -1,0 +1,17 @@
+{
+  "type": "function",
+  "function": {
+    "name": "query_flutter_docs",
+    "description": "Query Flutter/Dart documentation for technical questions about Flutter framework, Dart language, widgets, state management, navigation, APIs, debugging, or code examples. Use this when users ask specific Flutter/Dart questions.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "query": {
+          "type": "string",
+          "description": "The Flutter/Dart question to search documentation for"
+        }
+      },
+      "required": ["query"]
+    }
+  }
+}
