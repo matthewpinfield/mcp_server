@@ -57,7 +57,7 @@ WEB_CONTENT_LENGTH_ENHANCED = 1200  # Increased from 800 chars
 
 # Git/GitHub configuration
 GIT_KEYWORDS = ["git", "commit", "push", "pull", "branch", "merge", "checkout", "status", "diff", "log", "clone", "repository", "repo"]
-GITHUB_KEYWORDS = ["github", "issue", "pull request", "pr", "release", "repository search", "repo search"]
+GITHUB_KEYWORDS = ["github push", "github pull", "create pr", "create pull request", "open pr", "github merge", "github issue", "create issue", "github release", "publish release", "github workflow", "github actions"]
 DEV_WORKFLOW_KEYWORDS = ["build", "test", "lint", "format", "deploy", "ci", "cd", "pipeline", "package", "dependency", "date", "time", "today", "day", "what day", "current date", "current time", "datetime", "calendar"]
 
 # Repository analysis configuration

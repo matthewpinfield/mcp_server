@@ -61,69 +61,24 @@ def is_title_generation_request(user_message: str) -> bool:
     ]
     return any(pattern in user_message_lower for pattern in title_patterns)
 
-async def analyze_complexity(user_message: str) -> bool:
-    """Use LLM to intelligently determine if query requires deep thinking"""
-    try:
-        # Initialize lightweight LLM for complexity analysis
-        complexity_llm = ChatOllama(
-            model=DEFAULT_MODEL,
-            base_url=OLLAMA_API_BASE,
-            temperature=get_model_temperature(DEFAULT_MODEL)
-        )
-        
-        # Craft analysis prompt
-        analysis_prompt = f"""Analyze this user message and determine if it requires deep reasoning, complex problem-solving, or multi-step thinking.
-
-User message: "{user_message}"
-
-Examples of NO deep thinking (simple responses):
-- "hi", "hello", "hey", "thanks", "thank you", "ok", "okay", "yes", "no", "bye"
-- "good morning", "good afternoon", "good evening", "how are you", "fine", "great"
-- "what time is it?", "what's the date?", "what day is it?"
-- "nice", "cool", "awesome", "perfect", "sure", "exactly", "right"
-- "I understand", "got it", "makes sense", "agreed", "correct"
-- "please", "sorry", "excuse me", "pardon", "welcome"
-- Simple acknowledgments and basic social interactions
-
-Examples of YES deep thinking (complex analysis):
-- "how does state management work?", "explain dependency injection"
-- "debug this error", "why is my code not working?", "fix this bug"
-- "create a function that...", "write code to...", "implement this feature"
-- "refactor this code", "optimize this algorithm", "improve performance"
-- "what's the difference between X and Y?", "compare these approaches"
-- "how to implement...", "best practices for...", "recommended approach"
-- "explain how this works", "walk me through this", "break this down"
-- "analyze this code", "review my implementation", "check for issues"
-- "design a system", "architect a solution", "plan this project"
-- "troubleshoot this problem", "investigate this issue", "diagnose the error"
-- "what are the pros and cons", "evaluate these options", "which is better"
-- "how do I solve...", "help me figure out...", "guide me through..."
-- "so you fully understand that some prompts do not require the use of tools?"
-- Technical programming questions, coding problems, debugging, explanations
-- Multi-step tasks, analysis, problem-solving, learning concepts
-- Questions about understanding, capabilities, or meta-reasoning
-
-Respond with only: YES or NO"""
-
-        # Get LLM analysis
-        response = await complexity_llm.ainvoke([HumanMessage(content=analysis_prompt)])
-        raw_response = response.content.strip()
-        
-        # Extract final answer after thinking blocks
-        if "</think>" in raw_response:
-            analysis = raw_response.split("</think>")[-1].strip().upper()
-        else:
-            analysis = raw_response.upper()
-        
-        # Return whether complex thinking is needed
-        needs_thinking = "YES" in analysis
-        logger.info(f"🧠 Complexity analysis for '{user_message}': {'COMPLEX' if needs_thinking else 'SIMPLE'}")
-        return needs_thinking
-        
-    except Exception as e:
-        logger.error(f"Complexity analysis error: {e}, using fallback logic")
-        # Fallback: use simple pattern matching instead of defaulting to complex
-        return not is_simple_greeting_or_response(user_message)
+def should_use_no_think(user_message: str) -> bool:
+    """Simple pattern matching to determine if /no_think should be used"""
+    NO_THINK_PATTERNS = [
+        "hi", "hello", "hey", "thanks", "thank you", "ok", "okay", 
+        "yes", "no", "bye", "goodbye", "good morning", "good afternoon",
+        "nice", "cool", "awesome", "perfect", "sure", "exactly", "right",
+        "got it", "makes sense", "agreed", "correct"
+    ]
+    
+    message_lower = user_message.lower().strip()
+    
+    # Check exact matches or very short messages
+    if message_lower in NO_THINK_PATTERNS or len(message_lower) <= 3:
+        logger.info(f"🧠 Using /no_think for simple message: '{user_message}'")
+        return True
+    
+    logger.info(f"🧠 Using default thinking for complex message: '{user_message}'")
+    return False
 
 def is_simple_greeting_or_response(user_message: str) -> bool:
     """Fallback simple check - only for very obvious cases"""
@@ -273,10 +228,168 @@ async def execute_simple_request(messages: List[Dict], user_message: str, reques
 
 async def execute_complex_request(messages: List[Dict], user_message: str, requested_model_name: str, tool_recommendations: Dict[str, bool]) -> str:
     """Execute a complex request with tools available"""
-    # For now, fall back to simple execution
-    # This can be enhanced later to handle tool-assisted responses
-    logger.info(f"🔧 Complex request with tools: {tool_recommendations}")
-    return await execute_simple_request(messages, user_message, requested_model_name)
+    try:
+        # Import all tool classes
+        from tools import (
+            LangchainMemoryContextTool,
+            LangchainMemorySaveTool,
+            LangchainMemoryRuleTool,
+            LangchainMemoryStatsTool,
+            LangchainMemoryCorrectionTool,
+            MultiLanguageSandboxTool,
+            SandboxStatsTool,
+            LangchainWebSearchTool,
+            LangchainGitStatusTool,
+            LangchainGitDiffTool,
+            LangchainGitCommitTool,
+            LangchainGitBranchTool,
+            LangchainGitLogTool,
+            LangchainFlutterDocTool,
+            LangchainCodeSearchTool
+        )
+
+        # Get file access tools function
+        def get_file_access_tools():
+            from tools import (
+                LangchainAutoLinterTool,
+                LangchainRepoExploreTool,
+                LangchainDependencyAnalysisTool,
+                LangchainCodeMetricsTool,
+                LangchainPackageSearchTool,
+                LangchainBuildCommandTool,
+                LangchainDateTimeTool,
+                LangchainGitHubRepoSearchTool,
+                LangchainGitHubIssuesTool,
+                LangchainGitHubReleasesTool
+            )
+            return {
+                "auto_linter": LangchainAutoLinterTool,
+                "repo_explore": LangchainRepoExploreTool,
+                "dependency_analysis": LangchainDependencyAnalysisTool,
+                "code_metrics": LangchainCodeMetricsTool,
+                "package_search": LangchainPackageSearchTool,
+                "build_command": LangchainBuildCommandTool,
+                "datetime": LangchainDateTimeTool,
+                "github_repo_search": LangchainGitHubRepoSearchTool,
+                "github_issues": LangchainGitHubIssuesTool,
+                "github_releases": LangchainGitHubReleasesTool
+            }
+
+        # Build context from tools BEFORE Qwen3 call
+        context_info = ""
+        
+        # Get memory context first
+        if tool_recommendations.get("memory"):
+            try:
+                memory_tool = LangchainMemoryContextTool()
+                memory_result = memory_tool._run(user_message)
+                if memory_result and "No relevant context" not in memory_result:
+                    context_info += f"\n--- MEMORY CONTEXT ---\n{memory_result}\n"
+                    logger.info("🧠 Retrieved memory context")
+            except Exception as e:
+                logger.error(f"Memory context error: {e}")
+        
+        # Get RAG context
+        if tool_recommendations.get("rag"):
+            try:
+                # Try Flutter docs first
+                flutter_tool = LangchainFlutterDocTool()
+                flutter_result = flutter_tool._run(user_message)
+                if flutter_result and "No relevant documentation" not in flutter_result:
+                    context_info += f"\n--- FLUTTER DOCUMENTATION ---\n{flutter_result}\n"
+                    logger.info("📚 Retrieved Flutter documentation")
+                
+                # Try code search
+                code_tool = LangchainCodeSearchTool()
+                code_result = code_tool._run(user_message)
+                if code_result and "No relevant code" not in code_result:
+                    context_info += f"\n--- CODE EXAMPLES ---\n{code_result}\n"
+                    logger.info("📚 Retrieved code examples")
+            except Exception as e:
+                logger.error(f"RAG context error: {e}")
+        
+        # Get web search context
+        if tool_recommendations.get("web_search"):
+            try:
+                web_tool = LangchainWebSearchTool()
+                web_result = web_tool._run(user_message)
+                if web_result and "No search results" not in web_result:
+                    context_info += f"\n--- WEB SEARCH RESULTS ---\n{web_result}\n"
+                    logger.info("🔍 Retrieved web search results")
+            except Exception as e:
+                logger.error(f"Web search error: {e}")
+
+        # Set up Qwen3 LLM with enhanced context
+        llm = ChatOllama(
+            model=requested_model_name,
+            base_url=OLLAMA_API_BASE,
+            temperature=get_model_temperature(requested_model_name)
+        )
+        
+        # Get memory rules for system message
+        memory_context = ""
+        try:
+            from tools.knowledge import mcp_get_context
+            memory_result = mcp_get_context(user_message, include_long_term=False)
+            if memory_result.get("status") == "success":
+                context = memory_result.get("context", {})
+                profile = context.get("profile", {})
+                rules = profile.get("rules", [])
+                if rules:
+                    memory_context = "IMPORTANT IDENTITY RULES:\n"
+                    for rule in rules[:10]:  # Top 10 rules
+                        rule_text = rule.get("rule", str(rule))
+                        memory_context += f"- {rule_text}\n"
+                    memory_context += "\nYou MUST follow these rules, especially regarding your identity and name.\n"
+        except Exception as e:
+            logger.error(f"Memory rules retrieval error: {e}")
+        
+        # Convert messages to LangChain format
+        lc_messages = []
+        
+        # Add system message with memory rules and tool context
+        system_content = ""
+        if memory_context:
+            system_content += memory_context + "\n"
+        if context_info:
+            system_content += f"REFERENCE INFORMATION:\n{context_info}\n"
+            system_content += "Use this reference information to provide accurate, detailed responses.\n"
+        
+        if system_content:
+            lc_messages.append(SystemMessage(content=system_content))
+        
+        # Add conversation history
+        for msg in messages:
+            if msg["role"] == "user":
+                lc_messages.append(HumanMessage(content=msg["content"]))
+            elif msg["role"] == "assistant":
+                lc_messages.append(AIMessage(content=msg["content"]))
+        
+        # Get response from Qwen3 with enhanced context
+        logger.info(f"🤖 Qwen3 complex request with context: '{user_message}'")
+        response = await llm.ainvoke(lc_messages)
+        raw_response = response.content.strip()
+        
+        # Strip thinking blocks for final response
+        final_response = strip_thoughts_from_content(raw_response)
+        
+        logger.info(f"🤖 Qwen3 completed complex request. Response length: {len(final_response)}")
+        
+        # Save interaction to memory
+        try:
+            from tools.knowledge import mcp_save_interaction
+            interaction_messages = messages + [{"role": "assistant", "content": final_response}]
+            save_result = mcp_save_interaction(interaction_messages, {"type": "complex_conversation"})
+            if save_result.get("status") != "success":
+                logger.warning(f"Failed to save interaction: {save_result.get('error')}")
+        except Exception as e:
+            logger.error(f"Memory save error: {e}")
+        
+        return final_response
+        
+    except Exception as e:
+        logger.error(f"Complex request execution error: {e}")
+        raise e
 
 async def execute_agent_request(messages: List[Dict], user_message: str, requested_model_name: str, tool_recommendations: Dict[str, bool]) -> str:
     """Main entry point - decides between simple and complex execution"""

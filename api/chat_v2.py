@@ -22,7 +22,6 @@ from langchain import hub
 from core.orchestrator_v2 import (
     get_tool_recommendations,
     get_workflow_recommendations,
-    analyze_complexity,
     execute_agent_request
 )
 
@@ -150,19 +149,23 @@ async def chat_proxy(request: Request):
         tool_recommendations = get_tool_recommendations(user_message)
         workflow_recommendations = get_workflow_recommendations(user_message)
         
-        # Use intelligent complexity analysis to determine thinking mode
-        from core.orchestrator_v2 import is_title_generation_request
+        # Use simple pattern matching to determine thinking mode
+        from core.orchestrator_v2 import is_title_generation_request, should_use_no_think
         
-        # Skip complex analysis for obvious title generation requests
+        # Skip thinking for title generation requests
         if is_title_generation_request(user_message):
-            needs_thinking = False
+            use_no_think = True
         else:
-            # Use actual complexity analysis instead of defaulting to True
-            needs_thinking = await analyze_complexity(user_message)
+            # Use simple pattern matching
+            use_no_think = should_use_no_think(user_message)
         
         # Add thinking mode prefix to user message
-        thinking_mode = "/think" if needs_thinking else "/no_think"
-        modified_user_message = f"{thinking_mode} {user_message}"
+        if use_no_think:
+            thinking_mode = "/no_think"
+            modified_user_message = f"/no_think {user_message}"
+        else:
+            thinking_mode = "default thinking"
+            modified_user_message = user_message  # Default thinking on
         
         # Update the last message with thinking mode directive
         modified_messages = messages.copy()

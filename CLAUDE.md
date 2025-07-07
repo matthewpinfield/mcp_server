@@ -2,8 +2,13 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+### Before anything else
+read mcp_engineering_plan.md and all the files listed in "New File Structure (Reference)"
+
 ## Rules
 IMPORTANT!! THIS IS FIRST RULE: Don't assume anything
+be polite and remember you are the assistant so dont swear.. ever..
+you cannot use the sudo command so ask the user to run the command and repoert back 
 Use clear, concise trains of thought
 Use websearch to ensure to pass 100% true facts
 Always use todo lists to break down tasks into smaller bites
@@ -132,3 +137,47 @@ YAML configuration in `mcp_config.yaml` for centralized settings.
 - **Direct HTTP**: RESTful API for custom integrations
 
 The system is designed for production deployment with proper error handling, logging, and graceful degradation when optional services are unavailable.
+
+## Proven Issue Resolution Methodology
+
+**How to Fix Complex Issues (Learned from Tool Fix Session):**
+
+### 1. **Real Functional Testing vs Existence Testing**
+- Never test if something "exists" - test if it actually **works**
+- Use specific, verifiable test cases with expected answers:
+  - "when did Harold Lloyd die" → expect "1971"
+  - "where is lead on periodic table" → expect "82" or "Pb"
+- If you can't verify the answer is correct, the test is useless
+
+### 2. **One Thing At A Time (Critical Rule)**
+- Fix **exactly one** specific issue
+- Test that **one** fix immediately  
+- Only move to next issue after current one is **completely working**
+- Never try to "fix everything at once"
+
+### 3. **Todo Lists for Micro-Management**
+- Break overwhelming problems into tiny, manageable chunks
+- Each todo item should be completable in one focused session
+- Mark as completed **only when actually verified working**
+- Example: "Fix Memory tool - key pattern mismatch" not "Fix memory system"
+
+### 4. **Forced Verification at Each Step**
+The pattern that works:
+1. Identify **specific** issue (not vague problem)
+2. Make **minimal** fix (change only what's needed)
+3. Test **immediately** with real functionality test
+4. Mark completed **only if actually working**
+
+### 5. **Distinguish Between Types of Failures**
+- **Existence failure**: "Class won't load" 
+- **Functional failure**: "Tool runs but gives wrong answer"
+- **Logic failure**: "Tool works but test expectations are wrong"
+- **Architecture failure**: "Using wrong tool for the task"
+
+### 6. **Key Success Factors**
+- **Harsh feedback loops**: If something doesn't work, call it broken immediately
+- **Specific examples**: Use real-world test cases with verifiable outcomes  
+- **No assumption**: Just because code runs doesn't mean it works correctly
+- **Immediate testing**: Test every change before moving on
+
+**Remember**: The difference between despair and success is methodical, verified progress rather than assumed progress.

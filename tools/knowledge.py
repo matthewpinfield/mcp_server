@@ -709,10 +709,10 @@ class MemorySystem:
             if self.redis_client is not None:
                 try:
                     self.redis_client.ping()  # Test connection
-                    keys_result = self.redis_client.keys(f"context:{DEFAULT_USER}:*")
-                    context_keys = len(cast(list, keys_result))
+                    interaction_keys = self.redis_client.keys("interaction:*")
+                    redis_key_count = len(cast(list, interaction_keys))
                     stats["redis_status"] = "connected"
-                    stats["redis_keys"] = context_keys
+                    stats["redis_keys"] = redis_key_count
                 except Exception as e:
                     logger.debug(f"Redis stats error: {e}")
                     stats["redis_status"] = "error"
@@ -771,13 +771,20 @@ class MemorySystem:
             return []
             
         try:
-            keys = self.redis_client.keys(f"context:{DEFAULT_USER}:*")
+            keys = self.redis_client.keys("interaction:*")
             contexts = []
             
             for key in cast(list, keys):
                 data = self.redis_client.get(key)
                 if data:
-                    contexts.append(json.loads(cast(str, data)))
+                    interaction_data = json.loads(cast(str, data))
+                    # Extract the text content for context
+                    contexts.append({
+                        "content": interaction_data.get("text", ""),
+                        "timestamp": interaction_data.get("timestamp", ""),
+                        "metadata": interaction_data.get("metadata", {}),
+                        "messages": interaction_data.get("messages", [])
+                    })
             
             # Sort by timestamp and limit to recent 5 interactions only
             contexts.sort(key=lambda x: x["timestamp"], reverse=True)
@@ -1196,7 +1203,7 @@ class LangchainFlutterDocTool(AsyncTool):
     args_schema: type[BaseModel] = FlutterDocSchema
 
     def _run(self, query: str, max_results: int = 10) -> str:
-        logger.info(f" RAG Tool: Received query: '{query}'")
+        logger.info(f"Docs Search: Received query: '{query}'")
         try:
             import requests
             from config import RAG_SERVER_ENDPOINT, REQUEST_TIMEOUT
@@ -1227,11 +1234,11 @@ class LangchainFlutterDocTool(AsyncTool):
                 else: result_text = json.dumps(rag_json)
             except ValueError: result_text = response.text
             
-            logger.info(f" RAG Tool: Successfully retrieved documentation (length: {len(result_text)}).")
+            logger.info(f"Docs Search: Successfully retrieved documentation (length: {len(result_text)}).")
             return f"Documentation found for query '{query}':\n{result_text}"
             
         except Exception as e:
-            logger.error(f" RAG Tool: Error: {e}")
+            logger.error(f"Docs Search: Error: {e}")
             return f"Error during RAG tool execution: {str(e)}"
 
 class LangchainCodeSearchTool(AsyncTool):
@@ -1240,7 +1247,7 @@ class LangchainCodeSearchTool(AsyncTool):
     args_schema: type[BaseModel] = CodeSearchSchema
 
     def _run(self, query: str, max_results: int = 10) -> str:
-        logger.info(f"Code Search: query='{query}', max_results={max_results}")
+        logger.info(f"Code Search: Received query: '{query}', max_results={max_results}")
         try:
             import requests
             from config import RAG_CODE_ENDPOINT, REQUEST_TIMEOUT
@@ -1264,7 +1271,7 @@ class LangchainCodeSearchTool(AsyncTool):
                         formatted_response += f"   Source: {source}\n"
                         formatted_response += f"   {content}\n\n"
                     
-                    logger.info(f"Code Search Tool: Found {len(docs)} results")
+                    logger.info(f"Code Search: Found {len(docs)} results")
                     return formatted_response
                 else:
                     return f"No code examples found for '{query}'"
@@ -1302,6 +1309,11 @@ class LangchainMemoryContextTool(AsyncTool):
                     summary += "**Recent Conversations (Tier 1 Redis - Fast):**\n"
                     for item in context['short_term'][-3:]:  # Last 3 interactions
                         summary += f"- {item.get('timestamp', '')}: {len(item.get('messages', []))} messages\n"
+                        # If this is a query search, show matching content
+                        if query and item.get('content'):
+                            content = item.get('content', '')
+                            if query.lower() in content.lower():
+                                summary += f"  Match: {content[:200]}...\n"
                 
                 # Add rules from Tier 2 MongoDB (PERSISTENT)
                 if context.get('profile', {}).get('rules'):

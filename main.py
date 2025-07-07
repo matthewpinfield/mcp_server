@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Main entry point for MCP Server
+Main entry point for MCP Server - Version 2
 Contains the FastAPI app instance, dependency checks, and Uvicorn startup
 """
 
@@ -28,74 +28,74 @@ from config import (
 from api.chat import router as chat_router
 
 # Global executor for async tool operations
-executor = None
+executor = ThreadPoolExecutor(max_workers=MAX_WORKERS)
 
-def check_ollama_status():
-    """
-    Verifies that the Ollama server is running and has the required model.
-    Exits the application if checks fail.
-    """
-    print("--- Verifying Ollama Service ---")
+# Configure logging
+logging.basicConfig(
+    level=LOG_LEVEL,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
-    # Step 1: Check if the Ollama server is running at all
+async def check_ollama_service():
+    """Check if Ollama service is running and has the default model"""
     try:
-        response = requests.get(OLLAMA_API_BASE, timeout=10) 
-        response.raise_for_status() # Raises an exception for bad status codes (4xx or 5xx)
-        print("[ OK ] Ollama server responding")
-    except requests.RequestException as e:
-        print("[FAIL] Ollama server not reachable")
-        print(f"       Please ensure 'ollama serve' is active at {OLLAMA_API_BASE}")
-        sys.exit(1)
-
-    # Step 2: If the server is running, check if it has the required model
-    try:
-        tags_response = requests.get(f"{OLLAMA_API_BASE}/api/tags", timeout=15)
-        tags_response.raise_for_status()
+        # Check if Ollama API is responding
+        response = requests.get(f"{OLLAMA_API_BASE}/api/tags", timeout=5)
+        if response.status_code != 200:
+            print(f"[FAIL] Ollama API not responding at {OLLAMA_API_BASE}")
+            return False
         
-        models = tags_response.json().get("models", [])
-        model_found = any(m.get("name", "").startswith(DEFAULT_MODEL) for m in models)
+        # Check if the default model is available
+        models_data = response.json()
+        available_models = [model['name'] for model in models_data.get('models', [])]
+        
+        if DEFAULT_MODEL not in available_models:
+            print(f"[FAIL] Default model '{DEFAULT_MODEL}' not found in Ollama")
+            print(f"       Available models: {available_models}")
+            return False
+        
+        print(f"INFO:     [ OK ] Ollama service ready with model '{DEFAULT_MODEL}'")
+        return True
+        
+    except requests.exceptions.RequestException as e:
+        print(f"INFO:     [FAIL] Failed to connect to Ollama at {OLLAMA_API_BASE}: {e}")
+        return False
+    except Exception as e:
+        print(f"INFO:     [FAIL] Error checking Ollama service: {e}")
+        return False
 
-        if model_found:
-            print(f"[ OK ] Model '{DEFAULT_MODEL}' available")
+async def check_rag_service():
+    """Check if RAG service is running"""
+    try:
+        rag_url = "http://localhost:8008/search/docs"
+        response = requests.get(f"{rag_url.replace('/search/docs', '')}/health", timeout=5)
+        if response.status_code == 200:
+            print("INFO:     [ OK ] RAG service is running")
+            return True
         else:
-            available_models = [m.get("name") for m in models]
-            print(f"[FAIL] Model '{DEFAULT_MODEL}' not found")
-            print(f"       Please run 'ollama pull {DEFAULT_MODEL}' to download it")
-            sys.exit(1)
+            print(f"INFO:     [WARN] RAG service health check failed (status: {response.status_code})")
+            return False
+    except requests.exceptions.RequestException:
+        print("INFO:     [WARN] RAG service not available - will continue without RAG")
+        return False
+    except Exception as e:
+        print(f"INFO:     [WARN] RAG service check error: {e}")
+        return False
 
-    except requests.RequestException as e:
-        print("[FAIL] Could not get model list from Ollama server")
-        sys.exit(1)
-        
-    print("[ OK ] Ollama Service Ready")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Application lifespan manager"""
-    global executor
-    
+    """Startup and shutdown logic"""
     # Startup
-    logging.basicConfig(
-        level=LOG_LEVEL, 
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-    )
-    logger = logging.getLogger(__name__)
     
-    # Initialize ThreadPoolExecutor for tool operations
-    executor = ThreadPoolExecutor(max_workers=MAX_WORKERS)
-    logger.info(f"Started ThreadPoolExecutor with {MAX_WORKERS} workers")
+    # Check Ollama dependency (required)
+    if not await check_ollama_service():
+        print("[FAIL] Ollama service check failed - this is required for operation")
+        sys.exit(1)
     
-    # Check RAG system status
-    try:
-        import requests
-        rag_response = requests.get("http://localhost:8008/health", timeout=5)
-        if rag_response.status_code == 200:
-            logger.info("--- RAG System ---")
-            logger.info("[ OK ] Dual endpoint server accessible")
-        else:
-            logger.warning("[WARN] RAG system not responding")
-    except Exception as e:
-        logger.warning(f"[FAIL] RAG system check failed: {e}")
+    # Check RAG dependency (optional)
+    await check_rag_service()
     
     # Check memory system status  
     try:
@@ -103,56 +103,76 @@ async def lifespan(app: FastAPI):
         memory_stats = mcp_get_memory_stats()
         if memory_stats.get('status') == 'success':
             stats = memory_stats['stats']
-            logger.info("--- Memory System ---")
-            logger.info(f"[ OK ] Tier 1 Redis: {stats.get('redis_status', 'unknown')} ({stats.get('redis_keys', 0)} keys) | Tier 2 MongoDB: {stats.get('mongodb_status', 'unknown')} ({stats.get('mongodb_rules', 0)} rules) | Tier 3 ChromaDB: {stats.get('chromadb_status', 'unknown')} ({stats.get('chromadb_documents', 0)} docs)")
+            print("INFO:     --- Memory System ---")
+            print(f"INFO:     [ OK ] Tier 1 Redis: {stats.get('redis_status', 'unknown')} ({stats.get('redis_keys', 0)} keys) | Tier 2 MongoDB: {stats.get('mongodb_status', 'unknown')} ({stats.get('mongodb_rules', 0)} rules) | Tier 3 ChromaDB: {stats.get('chromadb_status', 'unknown')} ({stats.get('chromadb_documents', 0)} docs)")
         else:
-            logger.warning(f"[WARN] Memory system check failed: {memory_stats.get('error', 'Unknown error')}")
+            print(f"INFO:     [WARN] Memory system check failed: {memory_stats.get('error', 'Unknown error')}")
     except Exception as e:
-        logger.error(f"[FAIL] Failed to check memory system status: {e}")
+        print(f"INFO:     [FAIL] Failed to check memory system status: {e}")
     
-    logger.info("--- MCP Server startup complete ---")
     
     yield
     
     # Shutdown
     logger.info("Shutting down MCP Server...")
-    if executor:
-        executor.shutdown(wait=True)
-    logger.info("Shutdown complete")
+    executor.shutdown(wait=True)
 
 # Create FastAPI app
 app = FastAPI(
-    title="MCP Server",
-    description="Orchestrated Toolkit with Memory Integration",
+    title="Advanced MCP Server",
+    description="Model Context Protocol Server with intelligent agent capabilities",
     version="1.0.0",
     lifespan=lifespan
 )
 
-# Include routers
+# Include API routes
 app.include_router(chat_router)
 
-# Health check endpoint
+@app.get("/")
+async def root():
+    """Root endpoint with server info"""
+    return {
+        "name": "Advanced MCP Server",
+        "version": "1.0.0",
+        "status": "operational",
+        "model": DEFAULT_MODEL,
+        "endpoints": {
+            "chat": "/api/chat",
+            "openai_compatible": "/v1/chat/completions",
+            "models": "/v1/models"
+        }
+    }
+
 @app.get("/health")
 async def health_check():
     """Health check endpoint"""
-    return JSONResponse({
-        "status": "healthy",
-        "service": "MCP Server",
-        "version": "1.0.0"
-    })
-
-def main():
-    """Main entry point"""
-    # Run the check at the very beginning of the script
-    check_ollama_status()
-    
-    uvicorn.run(
-        "main:app",
-        host=MCP_SERVER_HOST,
-        port=MCP_SERVER_PORT,
-        reload=False,
-        log_level="info"
+    # Basic health check - could be enhanced with dependency checks
+    return JSONResponse(
+        status_code=200,
+        content={"status": "healthy", "version": "1.0.0"}
     )
 
+def signal_handler(signum, frame):
+    """Handle shutdown signals gracefully"""
+    logger.info(f"Received signal {signum}, shutting down...")
+    sys.exit(0)
+
 if __name__ == "__main__":
-    main()
+    # Register signal handlers for graceful shutdown
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+    
+    # Start the server
+    try:
+        uvicorn.run(
+            "main:app",
+            host=MCP_SERVER_HOST,
+            port=MCP_SERVER_PORT,
+            reload=False,  # Disable reload for production
+            log_level="info"
+        )
+    except KeyboardInterrupt:
+        logger.info("Server stopped by user")
+    except Exception as e:
+        logger.error(f"Server error: {e}")
+        sys.exit(1)

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Chat API endpoint for Advanced MCP Server - Version 2
-Main chat_proxy endpoint with simplified Qwen3 integration
+Chat API endpoint for Advanced MCP Server
+Main chat_proxy endpoint and related streaming functions
 """
 
 import json
@@ -22,7 +22,9 @@ from langchain import hub
 from core.orchestrator import (
     get_tool_recommendations,
     get_workflow_recommendations,
-    execute_agent_request
+    should_use_naming_conventions,
+    should_use_refactor_workflow,
+    should_use_test_workflow
 )
 
 from config import (
@@ -149,23 +151,20 @@ async def chat_proxy(request: Request):
         tool_recommendations = get_tool_recommendations(user_message)
         workflow_recommendations = get_workflow_recommendations(user_message)
         
-        # Use simple pattern matching to determine thinking mode
-        from core.orchestrator import is_title_generation_request, should_use_no_think
+        # Use intelligent complexity analysis to determine thinking mode
+        from core.orchestrator import is_title_generation_request
         
-        # Skip thinking for title generation requests
+        # Skip complex analysis for obvious title generation requests
         if is_title_generation_request(user_message):
-            use_no_think = True
+            needs_thinking = False
         else:
-            # Use simple pattern matching
-            use_no_think = should_use_no_think(user_message)
+            # Use actual complexity analysis instead of defaulting to True
+            from core.orchestrator import analyze_complexity
+            needs_thinking = await analyze_complexity(user_message)
         
         # Add thinking mode prefix to user message
-        if use_no_think:
-            thinking_mode = "/no_think"
-            modified_user_message = f"/no_think {user_message}"
-        else:
-            thinking_mode = "default thinking"
-            modified_user_message = user_message  # Default thinking on
+        thinking_mode = "/think" if needs_thinking else "/no_think"
+        modified_user_message = f"{thinking_mode} {user_message}"
         
         # Update the last message with thinking mode directive
         modified_messages = messages.copy()
@@ -181,6 +180,7 @@ async def chat_proxy(request: Request):
         
         # Execute agent request via orchestrator (unified path)
         try:
+            from core.orchestrator import execute_agent_request
             agent_response = await execute_agent_request(modified_messages, modified_user_message, requested_model_name, tool_recommendations)
             
             if stream:
