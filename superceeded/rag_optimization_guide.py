@@ -5,102 +5,122 @@ Provides specific recommendations for optimizing the RAG pipeline
 """
 
 import asyncio
-import httpx
 import json
 import time
 from typing import Dict, List, Optional
 
+import httpx
+
+
 class RAGOptimizer:
     """Utilities for optimizing RAG server performance"""
-    
+
     def __init__(self, rag_endpoint: str = "http://localhost:8008"):
         self.rag_endpoint = rag_endpoint
         self.client = httpx.AsyncClient(timeout=30.0)
-    
+
     async def test_rag_performance(self, test_queries: List[str]) -> Dict:
         """Test current RAG server performance"""
         results = []
-        
+
         for query in test_queries:
             start_time = time.time()
-            
+
             try:
                 response = await self.client.post(
-                    f"{self.rag_endpoint}/custom_rag_stuff",
-                    json={"fullInput": query}
+                    f"{self.rag_endpoint}/custom_rag_stuff", json={"fullInput": query}
                 )
                 response.raise_for_status()
-                
+
                 response_time = time.time() - start_time
                 response_length = len(response.text)
-                
-                results.append({
-                    "query": query[:50] + "...",
-                    "response_time": response_time,
-                    "response_length": response_length,
-                    "success": True
-                })
-                
+
+                results.append(
+                    {
+                        "query": query[:50] + "...",
+                        "response_time": response_time,
+                        "response_length": response_length,
+                        "success": True,
+                    }
+                )
+
             except Exception as e:
-                results.append({
-                    "query": query[:50] + "...",
-                    "response_time": time.time() - start_time,
-                    "response_length": 0,
-                    "success": False,
-                    "error": str(e)
-                })
-        
+                results.append(
+                    {
+                        "query": query[:50] + "...",
+                        "response_time": time.time() - start_time,
+                        "response_length": 0,
+                        "success": False,
+                        "error": str(e),
+                    }
+                )
+
         return {
             "test_results": results,
-            "avg_response_time": sum(r["response_time"] for r in results if r["success"]) / max(1, sum(1 for r in results if r["success"])),
-            "success_rate": sum(1 for r in results if r["success"]) / len(results)
+            "avg_response_time": sum(
+                r["response_time"] for r in results if r["success"]
+            )
+            / max(1, sum(1 for r in results if r["success"])),
+            "success_rate": sum(1 for r in results if r["success"]) / len(results),
         }
-    
+
     async def check_rag_health(self) -> Dict:
         """Check RAG server health and capabilities"""
         try:
             health_response = await self.client.get(f"{self.rag_endpoint}/health")
             health_data = health_response.json()
-            
+
             return {
                 "status": "healthy",
                 "rag_server_info": health_data,
-                "recommendations": self.generate_health_recommendations(health_data)
+                "recommendations": self.generate_health_recommendations(health_data),
             }
         except Exception as e:
             return {
                 "status": "unhealthy",
                 "error": str(e),
-                "recommendations": ["Check if RAG server is running", "Verify endpoint URL", "Check network connectivity"]
+                "recommendations": [
+                    "Check if RAG server is running",
+                    "Verify endpoint URL",
+                    "Check network connectivity",
+                ],
             }
-    
+
     def generate_health_recommendations(self, health_data: Dict) -> List[str]:
         """Generate optimization recommendations based on health data"""
         recommendations = []
-        
+
         # Check embedding model
         embedding_model = health_data.get("embedding_model", "")
         if "nomic-embed-text" in embedding_model:
-            recommendations.append("✓ Using fast nomic-embed-text model - good choice for speed")
+            recommendations.append(
+                "✓ Using fast nomic-embed-text model - good choice for speed"
+            )
         elif "all-MiniLM-L6-v2" in embedding_model:
-            recommendations.append("Consider upgrading to nomic-embed-text for better performance")
-        
+            recommendations.append(
+                "Consider upgrading to nomic-embed-text for better performance"
+            )
+
         # Check default model
         default_model = health_data.get("default_model", "")
         if "llama3.3:70b" in default_model:
-            recommendations.append("✓ Using llama3.3:70b - GPT-4 class model with excellent reasoning")
-        
+            recommendations.append(
+                "✓ Using llama3.3:70b - GPT-4 class model with excellent reasoning"
+            )
+
         # Check database status
         if health_data.get("database_available"):
             recommendations.append("✓ Database is available")
         else:
             recommendations.append(" Database unavailable - this will cause failures")
-        
+
         return recommendations
+
 
 def print_optimization_guide():
     """Print comprehensive optimization guide"""
-    print("""
+    print(
+        """
  MCP SERVER PERFORMANCE OPTIMIZATION GUIDE
 ============================================
 
@@ -177,11 +197,14 @@ MONITORING:
 - Monitor first-chunk-time (user perception)
 - Track cache hit rates
 - Measure query routing accuracy
-""")
+"""
+    )
+
 
 def print_rag_specific_optimizations():
     """Print RAG-specific optimization recommendations"""
-    print("""
+    print(
+        """
  RAG SERVER SPECIFIC OPTIMIZATIONS
 ===================================
 
@@ -255,46 +278,55 @@ MONITORING METRICS:
 - LLM synthesis time
 - Cache hit/miss ratios
 - End-to-end response time
-""")
+"""
+    )
+
 
 async def main():
     """Main optimization utility"""
     import argparse
-    
+
     parser = argparse.ArgumentParser(description="RAG Optimization Utilities")
-    parser.add_argument("--test-rag", action="store_true", help="Test current RAG performance")
-    parser.add_argument("--health-check", action="store_true", help="Check RAG server health")
+    parser.add_argument(
+        "--test-rag", action="store_true", help="Test current RAG performance"
+    )
+    parser.add_argument(
+        "--health-check", action="store_true", help="Check RAG server health"
+    )
     parser.add_argument("--guide", action="store_true", help="Show optimization guide")
-    parser.add_argument("--rag-guide", action="store_true", help="Show RAG-specific optimizations")
-    
+    parser.add_argument(
+        "--rag-guide", action="store_true", help="Show RAG-specific optimizations"
+    )
+
     args = parser.parse_args()
-    
+
     if args.guide:
         print_optimization_guide()
-    
+
     if args.rag_guide:
         print_rag_specific_optimizations()
-    
+
     if args.test_rag or args.health_check:
         optimizer = RAGOptimizer()
-        
+
         if args.health_check:
             print("Checking RAG server health...")
             health = await optimizer.check_rag_health()
             print(json.dumps(health, indent=2))
-        
+
         if args.test_rag:
             test_queries = [
                 "How to create a Flutter widget?",
                 "Explain Dart async programming",
                 "What is StatefulWidget?",
                 "How to handle user input in Flutter?",
-                "Dart language basics"
+                "Dart language basics",
             ]
-            
+
             print("Testing RAG performance...")
             results = await optimizer.test_rag_performance(test_queries)
             print(json.dumps(results, indent=2))
+
 
 if __name__ == "__main__":
     asyncio.run(main())

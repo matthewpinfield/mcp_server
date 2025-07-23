@@ -71,6 +71,19 @@ WiredTiger*
 *.lance
 chroma.sqlite3
 
+# New Memory Implementation - LanceDB
+/tier3_memory_lancedb/
+/conversations_lancedb/
+conversation_memory.lance
+
+# NAS Storage
+/mnt/my_nas_mcp_share/
+
+# Memory system caches
+embedding_cache/
+memory_dumps/
+conversation_exports/
+
 # Sensitive files
 *.key
 *.pem

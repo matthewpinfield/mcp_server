@@ -4,87 +4,72 @@ Import all tools from modular implementations
 Following mcp_engineering_plan.md structure: 6 functional groupings
 """
 
-# Git Tools
-from .git import (
-    LangchainGitStatusTool,
-    LangchainGitDiffTool,
-    LangchainGitCommitTool,
-    LangchainGitBranchTool,
-    LangchainGitLogTool
-)
-
-# Code Analysis Tools (4 tools: AutoLinter + RepoExplore + Dependencies + CodeMetrics)
+# Code Analysis Tools
 from .code_analysis import (
     LangchainAutoLinterTool,
-    LangchainRepoExploreTool,
+    LangchainCodeMetricsTool,
     LangchainDependencyAnalysisTool,
-    LangchainCodeMetricsTool
+    LangchainRepoExploreTool,
+    LangchainSystemFileReaderTool,
 )
 
-# Development Tools (3 tools: BuildCommand + PackageSearch + DateTime)
+# Development Tools
 from .development import (
     LangchainBuildCommandTool,
+    LangchainDateTimeTool,
     LangchainPackageSearchTool,
-    LangchainDateTimeTool
 )
 
-# Sandbox Tools
-from .sandbox import (
-    MultiLanguageSandboxTool,
-    SandboxStatsTool
+# Git Tools
+from .git import (
+    LangchainGitBranchTool,
+    LangchainGitCommitTool,
+    LangchainGitDiffTool,
+    LangchainGitLogTool,
+    LangchainGitStatusTool,
 )
-
-# Web Tools
-from .web import LangchainWebSearchTool
 
 # GitHub Tools
 from .github import (
-    LangchainGitHubRepoSearchTool,
     LangchainGitHubIssuesTool,
-    LangchainGitHubReleasesTool
+    LangchainGitHubReleasesTool,
+    LangchainGitHubRepoSearchTool,
 )
 
-# Knowledge Tools (7 tools: RAG + Memory)
+# Knowledge Tools
 from .knowledge import (
-    LangchainFlutterDocTool,
     LangchainCodeSearchTool,
-    LangchainMemoryContextTool,
-    LangchainMemorySaveTool, 
-    LangchainMemoryRuleTool,
-    LangchainMemoryStatsTool,
-    LangchainMemoryCorrectionTool
+    LangchainFlutterDocTool,
 )
 
+# Sandbox Tools
+from .sandbox import MultiLanguageSandboxTool, SandboxStatsTool
+
+# Web Tools
+# FIX: Import the new decorator-based tool function, not the old class.
+from .web import search_web
+
+# FIX: Update __all__ to export the correct tool name.
 __all__ = [
-    # Git Tools
-    'LangchainGitStatusTool',
-    'LangchainGitDiffTool',
-    'LangchainGitCommitTool',
-    'LangchainGitBranchTool',
-    'LangchainGitLogTool',
-    # Code Analysis Tools
-    'LangchainAutoLinterTool',
-    'LangchainRepoExploreTool',
-    'LangchainDependencyAnalysisTool',
-    'LangchainCodeMetricsTool',
-    # Development Tools
-    'LangchainBuildCommandTool',
-    'LangchainPackageSearchTool',
-    # Sandbox Tools
-    'MultiLanguageSandboxTool',
-    'SandboxStatsTool',
-    # Web Tools
-    'LangchainWebSearchTool',
-    # GitHub Tools
-    'LangchainGitHubRepoSearchTool',
-    'LangchainGitHubIssuesTool',
-    'LangchainGitHubReleasesTool',
-    # Knowledge Tools
-    'LangchainFlutterDocTool',
-    'LangchainCodeSearchTool',
-    'LangchainMemoryContextTool',
-    'LangchainMemorySaveTool', 
-    'LangchainMemoryRuleTool',
-    'LangchainMemoryStatsTool',
-    'LangchainMemoryCorrectionTool'
+    "LangchainGitStatusTool",
+    "LangchainGitDiffTool",
+    "LangchainGitCommitTool",
+    "LangchainGitBranchTool",
+    "LangchainGitLogTool",
+    "LangchainAutoLinterTool",
+    "LangchainRepoExploreTool",
+    "LangchainDependencyAnalysisTool",
+    "LangchainCodeMetricsTool",
+    "LangchainSystemFileReaderTool",
+    "LangchainBuildCommandTool",
+    "LangchainPackageSearchTool",
+    "MultiLanguageSandboxTool",
+    "SandboxStatsTool",
+    "search_web",
+    "LangchainGitHubRepoSearchTool",
+    "LangchainGitHubIssuesTool",
+    "LangchainGitHubReleasesTool",
+    "LangchainFlutterDocTool",
+    "LangchainCodeSearchTool",
+    "LangchainDateTimeTool",
 ]

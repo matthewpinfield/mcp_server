@@ -2,43 +2,73 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-### Before anything else
-read mcp_engineering_plan.md and all the files listed in "New File Structure (Reference)"
-
 ## Rules
-IMPORTANT!! THIS IS FIRST RULE: Don't assume anything
-be polite and remember you are the assistant so dont swear.. ever..
-you cannot use the sudo command so ask the user to run the command and repoert back 
-Use clear, concise trains of thought
-Use websearch to ensure to pass 100% true facts
-Always use todo lists to break down tasks into smaller bites
-Adhere strictly to MVP adadapt files dont create new
-NO new files to be added to the exiting file structure 
-The Project runs within a .venv
-Take small steps when planning code changes
-Create duplicate to keep files from further damage
-Create test files to check the fix before suggesting its a permanent fix.     
-/superceeded has code from before the main code of 5000 lines was split into its current form. it is a good source of good code.
+1. IMPORTANT!! THIS IS FIRST RULE: Don't assume anything
+2. be polite and remember you are the assistant so dont swear.. ever..
+3. you cannot use the sudo command so ask the user to run the command and repoert back 
+4. Use clear, concise trains of thought
+5. Use websearch to ensure to pass 100% true facts
+6. Always use todo lists to break down tasks into smaller bites
+7. Adhere strictly to MVP principles
+8. NO new files to be added to the exiting file structure unless approved, this exludes backups and test files
+9. Do not alter a existing file, use a sandbox protocol and create and test from back ups not original files.  Create an .md that lists all changes made so we can always go back. 
+10. The Project runs within a .venv
+11. Take small steps when planning code changes    
+12. The /superceeded folder has code from before the main code of 5000 lines was split into its current form,  it is a good source of good code.
+13. a fix is never ready till its tested against its actual purpose, example does it actually search the internet, recall a memory.
+14. confirming a file does not crash on startup is not the same as testing if the fix actually works.. see ## Proven Issue Resolution Methodology
+
+
+## Program Structure
+
+mcp_server_project/
+├── rag 
+│   └── dual_endpoint_server.py  # The Rag Server Code and Docs DB's the brains
+├── main.py                      # FastAPI app startup
+├── config.py                    # All configurations, keyword lists
+├── api/
+│   └── chat.py                  # The /api/chat endpoint
+├── core/
+│   ├── orchestrator.py          # The "brain" - request routing & tool execution loop
+│   ├── workflows.py             # The sequential WorkflowEngine (if needed)
+│   └── memory_integration.py    # Functions for prompt enhancement
+├── tools/
+│   ├── __init__.py              # Makes 'tools' a package
+│   ├── base.py                  # The new `AsyncTool` base class
+│   ├── git.py                   # GitTool (Unified)
+│   ├── github.py                # GitHubTool (Unified)
+│   ├── code_analysis.py         # CodeAnalysisTool, RepoStructureTool, PackageSearchTool etc.
+│   ├── development.py           # BuildCommandTool, 
+│   ├── sandbox.py               # SandboxExecuteTool
+│   ├── web.py                   # WebSearchTool
+│   └── knowledge.py             # MemoryManagementTool
+└── utils/
+    ├── __init__.py
+    ├── subprocess_helper.py
+    └── file_system_helper.py
 
 
 ## Development Commands
 
-### Start the MCP Server
+### 1. Start the RAG Server (required dependency)
 ```bash
-python main.py
+cd /mnt/caseSSD/mcp_server_project
+source .venv/bin/activate
+python3 rag/dual_endpoint_server.py
+```
+### 2. Start the Main Server
+```bash
+# This starts the RAG service on port 8008 with dual endpoints for Flutter docs and code examples.### Start the MCP Server
+cd /mnt/caseSSD/mcp_server_project
+source .venv/bin/activate
+python3 main.py
 ```
 The server will start on port 8013 and perform dependency checks for Ollama and RAG services.
 
-### Start the RAG Server (required dependency)
-```bash
-cd rag/
-python dual_endpoint_server.py
-```
-This starts the RAG service on port 8008 with dual endpoints for Flutter docs and code examples.
 
 ### Install Dependencies
 ```bash
-pip install -r requirements.txt
+pip install -r requirements.txt # the rag has its own requirements.txt
 ```
 
 ### Testing
@@ -76,9 +106,12 @@ This is an **MCP (Model Context Protocol) Server** that provides an intelligent 
    - Ollama embeddings integration for semantic search
 
 5. **Memory System** (3-tier architecture via `tools/knowledge.py`)
-   - **Tier 1**: Redis (session context, recent interactions)
-   - **Tier 2**: MongoDB (rules, preferences, long-term patterns)  
+   - **Tier 1**: Redis (session context, recent interactions) 
+   - **Tier 2**: MongoDB (rules, long-term patterns)  
    - **Tier 3**: ChromaDB (semantic memory, conversation history)
+
+   # Tier 1 Moves to Tier 3 after 14 days on a rolling order so there are always 14days of memories in Tier 1. 
+      They then move to Tier3 where they are stored till then move to Tier3 NAS Storage. All memories are acceessable and are never deleted. 
 
 ### Tool Categories
 
@@ -95,29 +128,13 @@ The system intelligently activates tool categories based on message analysis:
 
 ### Configuration
 
-Primary configuration in `config.py` with environment variable support:
+- **See config.py** 
 
-- `OLLAMA_API_BASE`: Ollama server URL (default: http://localhost:11434)
-- `RAG_SERVER_ENDPOINT`: RAG service URL (default: http://localhost:8008/search/docs)  
-- `DEFAULT_MODEL`: Default Ollama model (default: qwen3:30b-a3b)
-- `MAX_WORKERS`: Thread pool size (default: 3)
-
-YAML configuration in `mcp_config.yaml` for centralized settings.
-
-### Request Flow
-
-1. **Request Analysis**: Orchestrator analyzes user message for tool requirements
-2. **Tool Selection**: Based on keywords and patterns, activates relevant tool categories
-3. **Execution Path**:
-   - **Direct**: No tools needed → Direct Ollama streaming
-   - **Agent**: Tools needed → ReAct agent with selected tools
-4. **Memory Integration**: All interactions automatically saved to 3-tier memory system
-5. **Response**: Streaming response in OpenAI-compatible format
 
 ### Memory & Context Management
 
 - **Automatic Saving**: All conversations saved without user action
-- **Identity Rules**: System retrieves user preferences/rules for consistent behavior
+- **Identity Rules**: System retrieves user rules for consistent behavior
 - **Slash Commands**: Quick access to memory operations (`/remember`, `/recall`, `/rule`)
 - **Context Retrieval**: Relevant past context automatically included in agent prompts
 
@@ -125,15 +142,15 @@ YAML configuration in `mcp_config.yaml` for centralized settings.
 
 - **Ollama**: Required LLM service with specified model availability
 - **RAG Service**: Must be running on port 8008 for knowledge retrieval
-- **Redis**: Optional Tier 1 memory (degrades gracefully)
-- **MongoDB**: Optional Tier 2 memory (degrades gracefully)  
-- **ChromaDB**: Optional Tier 3 memory (degrades gracefully)
+- **Redis**: Tier 1 memory
+- **MongoDB**: Tier 2 memory
+- **ChromaDB**: Tier 3 memory moves to Tier 3 NAS
 
 ### Integration Points
 
 - **OpenAI-Compatible API**: `/v1/chat/completions` endpoint for standard clients
 - **Continue IDE**: Primary integration target with streaming support
-- **OpenWebUI**: Secondary integration with proper model listing
+- **OpenWebUI**: Secondary integration with proper model listing Port 9000
 - **Direct HTTP**: RESTful API for custom integrations
 
 The system is designed for production deployment with proper error handling, logging, and graceful degradation when optional services are unavailable.

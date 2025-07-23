@@ -6,63 +6,117 @@ MCP Web Search Tool - High-Quality Web Search with Domain Prioritization
 Provides intelligent web search functionality with tiered source prioritization.
 """
 
-import os
-import logging
 import asyncio
-import requests
+import json
+import logging
+import os
 from typing import Dict, List, Optional, Type
-from pydantic import BaseModel, Field
-from bs4 import BeautifulSoup
 from urllib.parse import urlparse
+
+import httpx
+import newspaper
+from bs4 import BeautifulSoup
+from langchain_core.tools import tool
+from pydantic import BaseModel, Field
+from readability import Document
 
 from .base import AsyncTool
 
 logger = logging.getLogger(__name__)
 
+
 # Schema for web search parameters
 class WebSearchSchema(BaseModel):
-    query: str = Field(description="Search query for web search using Google/Bing. Be specific and include relevant keywords.")
-    max_results: int = Field(description="Maximum number of search results to return", default=5)
-    general_search: bool = Field(description="If True, searches all websites without domain filtering. If False, prioritizes technical/programming sources.", default=False)
-    extended_timeout: bool = Field(description="If True, allows up to 60 seconds total time budget instead of 30 seconds. Use when normal search times out.", default=False)
+    query: str = Field(
+        description="Search query for web search using Google/Bing. Be specific and include relevant keywords."
+    )
+    max_results: int = Field(
+        description="Maximum number of search results to return", default=5
+    )
+    general_search: bool = Field(
+        description="If True, searches all websites without domain filtering. If False, prioritizes technical/programming sources.",
+        default=False,
+    )
+    extended_timeout: bool = Field(
+        description="If True, allows up to 60 seconds total time budget instead of 30 seconds. Use when normal search times out.",
+        default=False,
+    )
 
-# Google Custom Search API configuration
-GOOGLE_API_KEY = "***REMOVED-GOOGLE-API-KEY***"
-GOOGLE_SEARCH_ENGINE_ID = "948e280aa8f4544c5"
+
+# Google Custom Search API configuration - Load from environment variables
+GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
+GOOGLE_SEARCH_ENGINE_ID = os.getenv("GOOGLE_SEARCH_ENGINE_ID")
+
+# Check if API credentials are available
+if not GOOGLE_API_KEY or not GOOGLE_SEARCH_ENGINE_ID:
+    logger.error(
+        "Google API key or Search Engine ID not found in environment variables."
+    )
+    logger.error(
+        "Please set GOOGLE_API_KEY and GOOGLE_SEARCH_ENGINE_ID environment variables."
+    )
 
 # Domain prioritization for reputable sources
 PRIORITY_DOMAINS = {
     # Tier 1: Official Documentation & Style Guides (The Source of Truth)
     "tier_1_official": [
-        "docs.flutter.dev", "flutter.dev", "dart.dev", "api.flutter.dev", "api.dart.dev",
-        "docs.python.org", "python.org", "peps.python.org",
-        "developer.mozilla.org", "nodejs.org", "web.dev",
-        "react.dev", "reactjs.org", "vuejs.org", "angular.dev", "svelte.dev",
-        "docs.microsoft.com", "developer.apple.com", "developers.google.com",
-        "aws.amazon.com", "cloud.google.com", "azure.microsoft.com",
-        "kubernetes.io", "docker.com", "golang.org", "rust-lang.org",
-        "typescriptlang.org", "postgresql.org", "mongodb.com/docs"
+        "docs.flutter.dev",
+        "flutter.dev",
+        "dart.dev",
+        "api.flutter.dev",
+        "api.dart.dev",
+        "docs.python.org",
+        "python.org",
+        "peps.python.org",
+        "developer.mozilla.org",
+        "nodejs.org",
+        "web.dev",
+        "react.dev",
+        "reactjs.org",
+        "vuejs.org",
+        "angular.dev",
+        "svelte.dev",
+        "docs.microsoft.com",
+        "developer.apple.com",
+        "developers.google.com",
+        "aws.amazon.com",
+        "cloud.google.com",
+        "azure.microsoft.com",
+        "kubernetes.io",
+        "docker.com",
+        "golang.org",
+        "rust-lang.org",
+        "typescriptlang.org",
+        "postgresql.org",
+        "mongodb.com/docs",
     ],
     # Tier 2: Curated Educational Platforms & Expert Blogs (High-Quality Learning)
     "tier_2_educational": [
-        "freecodecamp.org", "realpython.com", "digitalocean.com",
-        "web.dev", "smashingmagazine.com", "martinfowler.com",
-        "css-tricks.com", "a11yproject.com", "webhint.io"
+        "freecodecamp.org",
+        "realpython.com",
+        "digitalocean.com",
+        "web.dev",
+        "smashingmagazine.com",
+        "martinfowler.com",
+        "css-tricks.com",
+        "a11yproject.com",
+        "webhint.io",
     ],
     # Tier 3: Reputable Q&A and Official Repositories (High-Quality Community Content)
-    "tier_3_community": [
-        "stackoverflow.com", "github.com"
-    ],
+    "tier_3_community": ["stackoverflow.com", "github.com"],
     # Tier 4: General Tech Blogs (Variable Quality - Use with Caution)
-    "tier_4_blogs": [
-        "medium.com", "dev.to", "hashnode.com", "codecademy.com"
-    ],
+    "tier_4_blogs": ["medium.com", "dev.to", "hashnode.com", "codecademy.com"],
     # Tier 5: News & Updates (For Current Events Only)
     "tier_5_news": [
-        "techcrunch.com", "arstechnica.com", "theverge.com",
-        "9to5google.com", "androidcentral.com", "engadget.com"
-    ]
+        "techcrunch.com",
+        "arstechnica.com",
+        "theverge.com",
+        "9to5google.com",
+        "androidcentral.com",
+        "engadget.com",
+    ],
 }
+
 
 class LangchainWebSearchTool(AsyncTool):
     name: str = "search_web"
@@ -75,140 +129,490 @@ class LangchainWebSearchTool(AsyncTool):
     )
     args_schema: Type[BaseModel] = WebSearchSchema
 
-    def _run(self, query: str, max_results: int = 3, general_search: bool = False, extended_timeout: bool = False) -> str:
+    def _run(
+        self,
+        query: str,
+        max_results: int = 3,
+        general_search: bool = False,
+        extended_timeout: bool = False,
+    ) -> str:
         # Handle case where LangChain passes parameters via JSON string (same issue as sandbox tool)
-        if isinstance(query, str) and query.startswith('{'):
+        if isinstance(query, str) and query.startswith("{"):
             try:
-                import json
                 parsed = json.loads(query)
-                query = parsed.get('query', query)
-                max_results = parsed.get('max_results', max_results)
-                general_search = parsed.get('general_search', general_search)
-                extended_timeout = parsed.get('extended_timeout', extended_timeout)
+                query = parsed.get("query", query)
+                max_results = parsed.get("max_results", max_results)
+                general_search = parsed.get("general_search", general_search)
+                extended_timeout = parsed.get("extended_timeout", extended_timeout)
             except json.JSONDecodeError:
                 pass  # If parsing fails, use original values
-        
-        logger.info(f"🔍 High-Quality Web Search: query='{query}', max_results={max_results}, extended_timeout={extended_timeout}")
+
+        logger.info(
+            f"High-Quality Web Search: query='{query}', max_results={max_results}, extended_timeout={extended_timeout}"
+        )
         try:
-            # Get initial search results
-            search_results = self._get_search_results(query, max_results * 3)
-            
+            # Apply intelligent query reformulation
+            optimized_query = self._reformulate_query(query)
+            logger.info(f"Query reformulated: '{query}' → '{optimized_query}'")
+
+            # Get search results using optimized query
+            search_results = self._get_search_results(optimized_query, max_results * 3)
+
             if not search_results:
                 return f"No search results found for query: '{query}'"
-            
+
             # Auto-detect if this is a coding-related query
             is_coding_query = self._is_coding_related_query(query.lower())
-            
+
             # Use domain filtering only for coding queries, general search for everything else
             if general_search or not is_coding_query:
-                best_content = self._find_and_scrape_general_source(search_results, query, extended_timeout)
+                best_content = self._find_and_scrape_general_source(
+                    search_results, query, extended_timeout
+                )
                 logger.info(f" Using general search for query: '{query}'")
             else:
-                best_content = self._find_and_scrape_best_source(search_results, query, extended_timeout)
+                best_content = self._find_and_scrape_best_source(
+                    search_results, query, extended_timeout
+                )
                 logger.info(f"🔧 Using technical search for coding query: '{query}'")
-            
+
             if best_content:
+                # Limit response to prevent agent context overflow
+                if len(best_content) > 2000:
+                    return (
+                        best_content[:2000]
+                        + "\n\n[Content truncated due to length limit]"
+                    )
                 return best_content
             else:
                 return f"No high-quality authoritative sources found for: '{query}'. Try refining your search terms or asking about established topics covered in official documentation."
-            
+
         except Exception as e:
-            logger.error(f"🔍 Web Search Tool error: {e}")
+            logger.error(f"Web Search Tool error: {e}")
             return f"Web search failed: {str(e)}"
-    
+
     def _get_search_results(self, query: str, max_results: int) -> List[Dict]:
-        """Get search results from Google Custom Search API"""
+        """Get search results from Google Custom Search API asynchronously"""
         try:
             if not GOOGLE_API_KEY:
                 logger.warning("Google Custom Search API key not configured")
                 return []
-            
+
             url = "https://www.googleapis.com/customsearch/v1"
             params = {
-                'key': GOOGLE_API_KEY,
-                'cx': GOOGLE_SEARCH_ENGINE_ID,
-                'q': query,
-                'num': min(max_results, 10),  # Google allows max 10 per request
-                'safe': 'medium'
+                "key": GOOGLE_API_KEY,
+                "cx": GOOGLE_SEARCH_ENGINE_ID,
+                "q": query,
+                "num": min(max_results, 10),  # Google allows max 10 per request
+                "safe": "medium",
             }
-            
-            logger.debug(f"🔍 Google Custom Search API call: {query}")
-            
+
+            logger.debug(f"Google Custom Search API call: {query}")
+
             # Progressive timeout for API calls: 15s, 30s
-            for attempt, timeout_value in enumerate([15, 30], 1):
-                try:
-                    if attempt > 1:
-                        logger.info(f"⏱️ Google API retry {attempt}/2 with {timeout_value}s timeout")
-                    
-                    response = requests.get(url, params=params, timeout=timeout_value)
-                    break
-                    
-                except requests.exceptions.Timeout as e:
-                    if attempt < 2:
-                        logger.warning(f"⏱️ Google API timeout after {timeout_value}s, retrying...")
-                        continue
-                    else:
-                        logger.error(f"⏱️ Google API taking too long to respond after {timeout_value}s")
-                        return []
-            
+            response = None
+            with httpx.Client() as client:
+                for attempt, timeout_value in enumerate([15, 30], 1):
+                    try:
+                        if attempt > 1:
+                            logger.info(
+                                f"Google API retry {attempt}/2 with {timeout_value}s timeout"
+                            )
+
+                        response = client.get(url, params=params, timeout=timeout_value)
+                        break
+
+                    except httpx.TimeoutException as e:
+                        if attempt < 2:
+                            logger.warning(
+                                f"Google API timeout after {timeout_value}s, retrying..."
+                            )
+                            continue
+                        else:
+                            logger.error(
+                                f"Google API taking too long to respond after {timeout_value}s"
+                            )
+                            return []
+
             if response.status_code == 403:
-                logger.error("Google Custom Search API: Quota exceeded or invalid API key")
+                logger.error(
+                    "Google Custom Search API: Quota exceeded or invalid API key"
+                )
                 return []
             elif response.status_code == 429:
                 logger.error("Google Custom Search API: Rate limit exceeded")
                 return []
-            
+
             response.raise_for_status()
-            
+
             data = response.json()
-            items = data.get('items', [])
-            
+            items = data.get("items", [])
+
             if not items:
-                logger.info(f"🔍 Google Custom Search: No results found for '{query}'")
+                logger.info(f"Google Custom Search: No results found for '{query}'")
                 return []
-            
+
             results = []
             for item in items:
-                results.append({
-                    'title': item.get('title', ''),
-                    'body': item.get('snippet', ''),
-                    'href': item.get('link', ''),
-                    'display_link': item.get('displayLink', '')
-                })
-            
-            logger.info(f"🔍 Google Custom Search: Found {len(results)} results for '{query}'")
+                results.append(
+                    {
+                        "title": item.get("title", ""),
+                        "body": item.get("snippet", ""),
+                        "href": item.get("link", ""),
+                        "display_link": item.get("displayLink", ""),
+                    }
+                )
+
+            logger.info(
+                f"Google Custom Search: Found {len(results)} results for '{query}'"
+            )
             return results
-            
-        except requests.exceptions.RequestException as e:
+
+        except httpx.RequestError as e:
             logger.error(f"Google Custom Search API request failed: {e}")
             return []
         except Exception as e:
             logger.error(f"Google Custom Search failed: {e}")
             return []
 
-    def _find_and_scrape_best_source(self, search_results: List[Dict], query: str, extended_timeout: bool = False) -> Optional[str]:
+    def _reformulate_query(self, original_query: str) -> str:
+        """Use LLM to generate multiple query variations and combine with OR for robust search"""
+        try:
+            import ollama
+
+            # Detect query intent
+            intent = self._detect_query_intent(original_query.lower())
+
+            reformulation_prompt = f"""You are a search query optimization expert. Your task is to generate 2 distinct, high-quality search queries based on the user's original query.
+
+Original query: "{original_query}"
+Intent category: {intent}
+
+Generate 2 optimized search queries that use specific, searchable terms.
+
+Rules:
+- Generate two different angles for the search. For example, one for a tutorial and one for official documentation.
+- For technical queries, use specific technology names and clear technical terms.
+- For current events, add "2025", "latest", or "recent".
+- Keep each query concise (under 10 words).
+- **Format the output as a numbered list, with each query on a new line. Do not add any other text.**
+
+Example Output:
+1. python async http library
+2. httpx vs aiohttp performance"""
+
+            response = ollama.chat(
+                model="gemma3:4b",
+                messages=[{"role": "user", "content": reformulation_prompt}],
+            )
+
+            llm_output = response["message"]["content"].strip()
+
+            # Start with the original query (no quotes for flexible matching)
+            all_queries = [original_query]
+
+            import re
+
+            # Split the LLM output by lines and process each one
+            for line in llm_output.split("\n"):
+                # Remove numbering like "1. ", "2. ", etc.
+                clean_line = re.sub(r"^\d+\.\s*", "", line).strip()
+
+                # Further cleanup (remove quotes, etc.)
+                clean_line = clean_line.strip("\"'")
+
+                if len(clean_line) > 3:
+                    all_queries.append(clean_line)
+
+            # Join all queries with " OR "
+            # Limit to the first 4 queries (original + 3 reformulated) to keep the URL reasonable
+            optimized_query_string = " OR ".join(all_queries[:4])
+
+            logger.info(f"Constructed diversified query: {optimized_query_string}")
+            return optimized_query_string
+
+        except Exception as e:
+            logger.warning(
+                f"Query reformulation failed: {e}, using original query only"
+            )
+            return original_query
+
+    def _detect_query_intent(self, query: str) -> str:
+        """Detect the intent category of a query"""
+        data_keywords = [
+            "data",
+            "database",
+            "schema",
+            "define",
+            "model",
+            "structure",
+            "table",
+            "field",
+        ]
+        tech_keywords = [
+            "code",
+            "programming",
+            "api",
+            "framework",
+            "library",
+            "function",
+            "class",
+            "method",
+        ]
+        current_keywords = [
+            "today",
+            "latest",
+            "recent",
+            "current",
+            "news",
+            "2024",
+            "2025",
+            "now",
+        ]
+
+        query_words = set(query.lower().split())
+
+        if any(word in query_words for word in data_keywords):
+            return "data_database"
+        elif any(word in query_words for word in tech_keywords):
+            return "technical"
+        elif any(word in query_words for word in current_keywords):
+            return "current_events"
+        else:
+            return "general"
+
+    def _extract_main_content(self, html_content: bytes, url: str) -> str:
+        """Extract main article content using intelligent content extraction"""
+        try:
+            # Method 1: Try newspaper3k for article extraction (best for news/articles)
+            try:
+                article = newspaper.Article(url)
+                article.set_html(html_content.decode("utf-8", errors="ignore"))
+                article.parse()
+
+                if article.text and len(article.text.strip()) > 100:
+                    # Clean up and format the text
+                    text = article.text.strip()
+                    # Limit to reasonable length (5000 chars) but much more than 800
+                    if len(text) > 5000:
+                        text = (
+                            text[:5000]
+                            + f"\n\n... (content truncated - showing first 5000 of {len(text)} characters)"
+                        )
+                    return text
+
+            except Exception as e:
+                logger.error(f"newspaper3k extraction failed for {url}: {e}")
+
+            # Method 2: Try readability (Mozilla's algorithm)
+            try:
+                # Convert bytes to string for readability library
+                html_string = (
+                    html_content.decode("utf-8", errors="ignore")
+                    if isinstance(html_content, bytes)
+                    else html_content
+                )
+                doc = Document(html_string)
+                # Get the main content HTML
+                main_content_html = doc.summary()
+
+                if main_content_html:
+                    # Parse with BeautifulSoup to extract clean text
+                    soup = BeautifulSoup(main_content_html, "html.parser")
+
+                    # Remove any remaining navigation/unwanted elements
+                    for element in soup(
+                        ["nav", "header", "footer", "aside", "script", "style"]
+                    ):
+                        element.decompose()
+
+                    # Extract text from paragraphs and main content
+                    paragraphs = soup.find_all(["p", "div", "section", "article"])
+                    if paragraphs:
+                        text_parts = []
+                        for p in paragraphs:
+                            p_text = p.get_text(separator=" ", strip=True)
+                            if len(p_text) > 20:  # Only include substantial paragraphs
+                                text_parts.append(p_text)
+
+                        text = "\n\n".join(text_parts)
+                    else:
+                        text = soup.get_text(separator="\n", strip=True)
+
+                    # Clean up whitespace
+                    text = "\n".join(
+                        line.strip() for line in text.split("\n") if line.strip()
+                    )
+
+                    if text and len(text.strip()) > 100:
+                        # Limit to reasonable length (5000 chars)
+                        if len(text) > 5000:
+                            text = (
+                                text[:5000]
+                                + f"\n\n... (content truncated - showing first 5000 of {len(text)} characters)"
+                            )
+                        return text
+
+            except Exception as e:
+                logger.error(f"readability extraction failed for {url}: {e}")
+
+            # Method 3: Fallback to basic extraction (improved)
+            try:
+                soup = BeautifulSoup(html_content, "html.parser")
+
+                # Remove unwanted elements
+                for element in soup(
+                    ["script", "style", "nav", "header", "footer", "aside"]
+                ):
+                    element.decompose()
+
+                # Try content selectors in order of preference
+                content_selectors = [
+                    "main",
+                    "article",
+                    '[role="main"]',
+                    ".main-content",
+                    "#main-content",
+                    ".content",
+                    ".post-content",
+                    ".entry-content",
+                    ".article-body",
+                    ".article-content",
+                    "#content",
+                    ".page-content",
+                ]
+
+                content_area = None
+                for selector in content_selectors:
+                    content_area = soup.select_one(selector)
+                    if content_area:
+                        break
+
+                if not content_area:
+                    content_area = soup.find("body")
+
+                if content_area:
+                    text = content_area.get_text(separator="\n", strip=True)
+                    # Clean up excessive whitespace
+                    text = "\n".join(
+                        line.strip() for line in text.split("\n") if line.strip()
+                    )
+
+                    if len(text) > 5000:
+                        text = (
+                            text[:5000]
+                            + f"\n\n... (content truncated - showing first 5000 of {len(text)} characters)"
+                        )
+
+                    if len(text.strip()) > 100:
+                        return text
+
+            except Exception as e:
+                logger.debug(f"Basic extraction failed for {url}: {e}")
+
+            # Method 4: JavaScript-rendered content fallback - extract ALL text and filter
+            try:
+                logger.warning(
+                    f"Standard extraction failed for {url}, trying JavaScript fallback"
+                )
+                soup = BeautifulSoup(html_content, "html.parser")
+
+                # Remove scripts, styles, and navigation but keep everything else
+                for element in soup(["script", "style", "nav", "header", "footer"]):
+                    element.decompose()
+
+                # Get all text content from the page
+                all_text = soup.get_text(separator=" ", strip=True)
+
+                # Split into sentences and filter useful content
+                sentences = []
+                for line in all_text.split("."):
+                    line = line.strip()
+                    # Filter out navigation, ads, and short fragments
+                    if (
+                        len(line) > 30
+                        and not line.lower().startswith(
+                            (
+                                "cookie",
+                                "sign in",
+                                "subscribe",
+                                "follow",
+                                "share",
+                                "menu",
+                            )
+                        )
+                        and not any(
+                            skip in line.lower()
+                            for skip in [
+                                "privacy policy",
+                                "terms of service",
+                                "advertisement",
+                            ]
+                        )
+                    ):
+                        sentences.append(line + ".")
+
+                if sentences:
+                    # Take first meaningful sentences up to reasonable length
+                    content = " ".join(sentences[:10])  # First 10 meaningful sentences
+                    if len(content) > 5000:
+                        content = (
+                            content[:5000]
+                            + f"\n\n... (content truncated - showing first 5000 of {len(content)} characters)"
+                        )
+
+                    if len(content.strip()) > 200:
+                        logger.info(
+                            f"JavaScript fallback successful for {url} - extracted {len(content)} chars"
+                        )
+                        return (
+                            f"**JavaScript-rendered content extracted:**\n\n{content}"
+                        )
+
+            except Exception as e:
+                logger.debug(f"JavaScript fallback failed for {url}: {e}")
+
+            logger.error(f"All content extraction methods failed for {url}")
+            return f"EXTRACTION_FAILED: Unable to extract readable content from {url}. This site may be heavily JavaScript-rendered or have anti-scraping protection."
+
+        except Exception as e:
+            logger.error(f"Content extraction failed for {url}: {e}")
+            return f"EXTRACTION_ERROR: Content extraction crashed for {url}: {str(e)}"
+
+    def _find_and_scrape_best_source(
+        self, search_results: List[Dict], query: str, extended_timeout: bool = False
+    ) -> Optional[str]:
         """Find and scrape the best source from search results with time budget allocation"""
-        tier_order = ["tier_1_official", "tier_2_educational", "tier_3_community", "tier_4_blogs"]
+        tier_order = [
+            "tier_1_official",
+            "tier_2_educational",
+            "tier_3_community",
+            "tier_4_blogs",
+        ]
         failed_sources = []
         partial_content = []
-        
+
         # Time budget allocation: 30 or 60 seconds total, split between promising URLs
         total_budget = 60.0 if extended_timeout else 30.0
-        logger.info(f"⏱️ Using {'extended' if extended_timeout else 'standard'} time budget: {total_budget}s")
+        logger.info(
+            f"Using {'extended' if extended_timeout else 'standard'} time budget: {total_budget}s"
+        )
         urls_to_try = []
-        
+
         # Collect promising URLs in tier order
         for tier_name in tier_order:
             tier_domains = PRIORITY_DOMAINS[tier_name]
             for result in search_results:
-                href = result.get('href', '')
+                href = result.get("href", "")
                 if not href:
                     continue
-                
+
                 try:
-                    domain = urlparse(href).netloc.replace('www.', '')
+                    domain = urlparse(href).netloc.replace("www.", "")
                     if any(tier_domain in domain for tier_domain in tier_domains):
-                        urls_to_try.append((href, result.get('title', ''), tier_name, domain))
+                        urls_to_try.append(
+                            (href, result.get("title", ""), tier_name, domain)
+                        )
                         if len(urls_to_try) >= 3:  # Limit to top 3 promising URLs
                             break
                 except Exception as e:
@@ -216,251 +620,341 @@ class LangchainWebSearchTool(AsyncTool):
                     continue
             if len(urls_to_try) >= 3:
                 break
-        
+
         if not urls_to_try:
             return None
-            
+
         # Allocate time budget: start with equal split, faster URLs leave more time for slower ones
         time_per_url = total_budget / len(urls_to_try)
         remaining_budget = total_budget
-        
+
         import time
+
         for i, (href, title, tier_name, domain) in enumerate(urls_to_try):
             logger.info(f"🏆 Found {tier_name} source: {domain}")
-            
+
             # Use remaining budget divided by remaining URLs
             remaining_urls = len(urls_to_try) - i
             current_budget = min(time_per_url, remaining_budget / remaining_urls)
-            
+
             start_time = time.time()
             content = self._scrape_content(href, title, tier_name, current_budget)
             elapsed = time.time() - start_time
             remaining_budget -= elapsed
-            
+
             if content:
-                if content.startswith("🕐 TIMEOUT"):  # Timeout message
+                if content.startswith("TIMEOUT"):  # Timeout message
                     failed_sources.append(f"{domain}: {content}")
                     continue
                 elif len(content.strip()) > 200:  # Good content threshold
-                    logger.info(f" Successfully scraped from {tier_name}: {domain} in {elapsed:.1f}s")
+                    logger.info(
+                        f" Successfully scraped from {tier_name}: {domain} in {elapsed:.1f}s"
+                    )
                     return content
                 else:
                     partial_content.append(f"{domain}: {content[:100]}...")
-            
+
             logger.warning(f" No usable content from {domain}")
-            
+
             # If we're out of time budget, stop trying
             if remaining_budget <= 1.0:
-                logger.info(f"⏱️ Time budget exhausted, stopping search")
+                logger.info(f"Time budget exhausted, stopping search")
                 break
-        
+
         # If no good sources found, return summary of what was tried
         if failed_sources or partial_content:
             summary = f"❌ **WEB SEARCH INCOMPLETE** for query: '{query}'\n\n"
-            
+
             # Check if any timeouts occurred
             timeout_sources = [fs for fs in failed_sources if "TIMEOUT" in fs]
             other_failures = [fs for fs in failed_sources if "TIMEOUT" not in fs]
-            
+
             if timeout_sources:
-                summary += "🕐 **TIMEOUTS OCCURRED:**\n"
+                summary += "**TIMEOUTS OCCURRED:**\n"
                 for timeout in timeout_sources[:3]:
                     summary += f"• {timeout}\n"
-                summary += "\n💡 **Ask me to retry with more time if you need content from these specific sources.**\n\n"
-            
+                summary += "\n**Ask me to retry with more time if you need content from these specific sources.**\n\n"
+
             if other_failures:
                 summary += "⚠️ **OTHER ISSUES:**\n"
                 for error in other_failures[:3]:
                     summary += f"• {error}\n"
                 summary += "\n"
-                
+
             if partial_content:
                 summary += "📄 **LIMITED CONTENT FOUND:**\n"
                 for partial in partial_content[:2]:
                     summary += f"• {partial}\n"
                 summary += "\n"
-            
+
             summary += "🔄 **SUGGESTIONS:** Try refining your search terms, or ask me to search with more time for specific sources."
             return summary
-        
+
         return None
 
     def _is_coding_related_query(self, query_lower: str) -> bool:
         """Detect if query is coding/programming related with context"""
         import re
-        
+
         # Strong programming indicators - these alone indicate coding
         strong_coding_keywords = [
-            "javascript", "typescript", "c++", "kotlin", "flutter", "react", "vue", "angular",
-            "coding", "programming", "function", "method", "class", "variable", "array", "object",
-            "algorithm", "debug", "syntax", "compile", "runtime", "framework", "library", 
-            "github", "docker", "kubernetes", "npm", "pip", "cargo", "maven", "gradle",
-            "webpack", "babel", "eslint", "pytest", "junit", "cmake", "json", "xml", "html",
-            "css", "graphql", "async", "await", "regex", "orm", "mvc", "crud", "oauth", "jwt"
+            "javascript",
+            "typescript",
+            "c++",
+            "kotlin",
+            "flutter",
+            "react",
+            "vue",
+            "angular",
+            "coding",
+            "programming",
+            "function",
+            "method",
+            "class",
+            "variable",
+            "array",
+            "object",
+            "algorithm",
+            "debug",
+            "syntax",
+            "compile",
+            "runtime",
+            "framework",
+            "library",
+            "github",
+            "docker",
+            "kubernetes",
+            "npm",
+            "pip",
+            "cargo",
+            "maven",
+            "gradle",
+            "webpack",
+            "babel",
+            "eslint",
+            "pytest",
+            "junit",
+            "cmake",
+            "json",
+            "xml",
+            "html",
+            "css",
+            "graphql",
+            "async",
+            "await",
+            "regex",
+            "orm",
+            "mvc",
+            "crud",
+            "oauth",
+            "jwt",
         ]
-        
+
         for keyword in strong_coding_keywords:
-            pattern = r'\b' + re.escape(keyword) + r'\b'
+            pattern = r"\b" + re.escape(keyword) + r"\b"
             if re.search(pattern, query_lower):
                 return True
-        
+
         # Context-dependent keywords - need programming context
         ambiguous_keywords = {
-            "python": ["tutorial", "code", "programming", "script", "import", "def", "class"],
-            "java": ["tutorial", "code", "programming", "class", "public", "static", "void"],
+            "python": [
+                "tutorial",
+                "code",
+                "programming",
+                "script",
+                "import",
+                "def",
+                "class",
+            ],
+            "java": [
+                "tutorial",
+                "code",
+                "programming",
+                "class",
+                "public",
+                "static",
+                "void",
+            ],
             "rust": ["programming", "cargo", "crate", "ownership", "borrowing"],
             "go": ["golang", "programming", "goroutine", "channel"],
             "api": ["rest", "endpoint", "request", "response", "json"],
             "database": ["sql", "query", "table", "schema", "mysql", "postgres"],
-            "error": ["exception", "bug", "debug", "traceback", "stack"]
+            "error": ["exception", "bug", "debug", "traceback", "stack"],
         }
-        
+
         for keyword, contexts in ambiguous_keywords.items():
-            keyword_pattern = r'\b' + re.escape(keyword) + r'\b'
+            keyword_pattern = r"\b" + re.escape(keyword) + r"\b"
             if re.search(keyword_pattern, query_lower):
                 # Check if any programming context words are present
                 for context in contexts:
-                    context_pattern = r'\b' + re.escape(context) + r'\b'
+                    context_pattern = r"\b" + re.escape(context) + r"\b"
                     if re.search(context_pattern, query_lower):
                         return True
-        
+
         return False
 
-    def _find_and_scrape_general_source(self, search_results: List[Dict], query: str, extended_timeout: bool = False) -> Optional[str]:
+    def _find_and_scrape_general_source(
+        self, search_results: List[Dict], query: str, extended_timeout: bool = False
+    ) -> Optional[str]:
         """Find and scrape from any source without domain filtering for general queries"""
         # Skip useless sites for general information
-        skip_domains = ["youtube.com", "youtu.be", "tiktok.com", "instagram.com", "facebook.com", "twitter.com", "x.com"]
-        
+        skip_domains = [
+            "youtube.com",
+            "youtu.be",
+            "tiktok.com",
+            "instagram.com",
+            "facebook.com",
+            "twitter.com",
+            "x.com",
+        ]
+
         # Time budget allocation: 30 or 60 seconds total for general search
         total_budget = 60.0 if extended_timeout else 30.0
-        logger.info(f"⏱️ Using {'extended' if extended_timeout else 'standard'} time budget: {total_budget}s")
+        logger.info(
+            f"Using {'extended' if extended_timeout else 'standard'} time budget: {total_budget}s"
+        )
         valid_results = []
-        
+
         # Filter out skip domains first
         for result in search_results:
-            href = result.get('href', '')
-            title = result.get('title', '')
+            href = result.get("href", "")
+            title = result.get("title", "")
             if not href:
                 continue
-            
+
             # Skip video/social media sites
             from urllib.parse import urlparse
-            domain = urlparse(href).netloc.replace('www.', '')
+
+            domain = urlparse(href).netloc.replace("www.", "")
             if any(skip_domain in domain for skip_domain in skip_domains):
-                logger.debug(f"🚫 Skipping {domain} (video/social media site)")
+                logger.debug(f"Skipping {domain} (video/social media site)")
                 continue
-                
+
             valid_results.append((href, title, domain))
             if len(valid_results) >= 3:  # Limit to top 3 valid URLs
                 break
-        
+
         if not valid_results:
             return f"No valid sources found for: '{query}'"
-        
+
         # Allocate time budget equally, faster responses leave more time for slower ones
         remaining_budget = total_budget
-        
+
         import time
+
         for i, (href, title, domain) in enumerate(valid_results):
             # Use remaining budget divided by remaining URLs
             remaining_urls = len(valid_results) - i
             current_budget = remaining_budget / remaining_urls
-            
+
             logger.info(f" Trying general source #{i+1}: {href}")
-            
+
             start_time = time.time()
             content = self._scrape_content(href, title, "general", current_budget)
             elapsed = time.time() - start_time
             remaining_budget -= elapsed
-            
-            if content and not content.startswith("🕐 TIMEOUT") and len(content.strip()) > 200:
-                logger.info(f" Successfully scraped general source: {href} in {elapsed:.1f}s")
+
+            if (
+                content
+                and not content.startswith("TIMEOUT")
+                and len(content.strip()) > 200
+            ):
+                logger.info(
+                    f" Successfully scraped general source: {href} in {elapsed:.1f}s"
+                )
                 return content
-            
+
             # If we're out of time budget, stop trying
             if remaining_budget <= 1.0:
-                logger.info(f"⏱️ Time budget exhausted for general search")
+                logger.info(f"Time budget exhausted for general search")
                 break
-        
+
         return f"Could not scrape useful content from search results for: '{query}'"
 
-    def _scrape_content(self, url: str, title: str, tier: str, time_budget: float = 30.0) -> Optional[str]:
-        """Scrape content from URL with time budget strategy"""
+    def _scrape_content(
+        self, url: str, title: str, tier: str, time_budget: float = 30.0
+    ) -> Optional[str]:
+        """Scrape content from URL with time budget strategy (async)"""
         try:
             headers = {
-                'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-                'Accept-Language': 'en-US,en;q=0.5',
-                'Accept-Encoding': 'gzip, deflate',
-                'Connection': 'keep-alive',
+                "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "Accept-Language": "en-US,en;q=0.5",
+                "Accept-Encoding": "gzip, deflate",
+                "Connection": "keep-alive",
             }
-            logger.info(f"🔗 Scraping content from: {url}")
-            
+            logger.info(f"Scraping content from: {url}")
+
             # Use the allocated time budget for this URL
-            logger.info(f"⏱️ Using {time_budget:.1f}s timeout budget for: {url}")
-            
+            logger.info(f"Using {time_budget:.1f}s timeout budget for: {url}")
+
             # Try with SSL verification first, then without if it fails
             for verify_ssl in [True, False]:
                 try:
-                    response = requests.get(url, headers=headers, timeout=time_budget, verify=verify_ssl)
-                    response.raise_for_status()
-                    break
-                    
-                except (requests.exceptions.SSLError, requests.exceptions.ConnectionError) as e:
+                    with httpx.Client(verify=verify_ssl) as client:
+                        response = client.get(url, headers=headers, timeout=time_budget)
+                        response.raise_for_status()
+                        break
+
+                except (httpx.ConnectError, httpx.ConnectTimeout) as e:
                     if verify_ssl:
-                        logger.warning(f"SSL error for {url}, retrying without SSL verification")
+                        logger.warning(
+                            f"SSL error for {url}, retrying without SSL verification"
+                        )
                         continue
                     else:
                         raise e
-                except requests.exceptions.Timeout as e:
-                    logger.warning(f"⏱️ Timeout after {time_budget:.1f}s for {url}")
-                    return f"🕐 TIMEOUT: {url} did not respond within {time_budget:.1f} seconds. The website may be slow or experiencing issues. If you need this specific content, please ask me to try again with more time."
-            
-            soup = BeautifulSoup(response.text, 'html.parser')
-            for element in soup(['script', 'style', 'nav', 'header', 'footer', 'aside']):
+                except httpx.TimeoutException as e:
+                    logger.warning(f"Timeout after {time_budget:.1f}s for {url}")
+                    return f"TIMEOUT: {url} did not respond within {time_budget:.1f} seconds. The website may be slow or experiencing issues. If you need this specific content, please ask me to try again with more time."
+
+            soup = BeautifulSoup(response.text, "html.parser")
+            for element in soup(
+                ["script", "style", "nav", "header", "footer", "aside"]
+            ):
                 element.decompose()
-            
-            # Try multiple content selectors
-            content_selectors = [
-                'main', 'article', '.content', '.post-content', '.entry-content', 
-                '.article-content', '#content', '.page-content', 'body'
-            ]
-            
-            content_area = None
-            for selector in content_selectors:
-                content_area = soup.select_one(selector)
-                if content_area:
-                    break
-            
-            if content_area:
-                text = content_area.get_text(separator='\n', strip=True)
-                # Clean up excessive whitespace
-                text = '\n'.join(line.strip() for line in text.split('\n') if line.strip())
-                
-                if len(text) > 800:
-                    text = text[:800] + f"\n\n... (content truncated - showing first 800 of {len(text)} characters)"
-                
+
+            # Extract main content using intelligent content extraction
+            text = self._extract_main_content(response.content, url)
+
+            if text and len(text.strip()) > 50:
                 tier_indicator = {
                     "tier_1_official": "🏛 **OFFICIAL DOCUMENTATION**",
-                    "tier_2_educational": "🎓 **EDUCATIONAL CONTENT**", 
+                    "tier_2_educational": "🎓 **EDUCATIONAL CONTENT**",
                     "tier_3_community": "👥 **COMMUNITY CONTENT**",
                     "tier_4_blogs": "📝 **BLOG CONTENT**",
-                    "general": " **GENERAL WEB SEARCH**"
+                    "general": " **GENERAL WEB SEARCH**",
                 }.get(tier, " **WEB CONTENT**")
-                
-                return f"{tier_indicator}\n**Source**: {title}\n**URL**: {url}\n\n{text}"
+
+                return (
+                    f"{tier_indicator}\n**Source**: {title}\n**URL**: {url}\n\n{text}"
+                )
+
             return None
-            
-        except requests.exceptions.SSLError as e:
-            logger.error(f"SSL error scraping {url}: {e}")
-            return f" SSL connection failed for {url}"
-        except requests.exceptions.ConnectionError as e:
+
+        except httpx.ConnectError as e:
             logger.error(f"Connection error scraping {url}: {e}")
             return f" Connection failed for {url}"
-        except requests.exceptions.Timeout as e:
+        except httpx.TimeoutException as e:
             logger.error(f"Timeout scraping {url}: {e}")
             return f" Request timeout for {url}"
         except Exception as e:
             logger.error(f"Failed to scrape {url}: {e}")
             return None
 
+
+# Add @tool decorator function for V9 orchestrator compatibility
+@tool
+async def search_web(query: str, general_search: bool = True) -> str:
+    """Searches the web and returns current information. Use for any query needing real-time data."""
+    logger.info(
+        f"search_web function called: query='{query}', general_search={general_search}"
+    )
+    try:
+        # Create instance of the class-based tool and call it
+        web_tool = LangchainWebSearchTool()
+        result = web_tool._run(query=query, general_search=general_search)
+        return result
+    except Exception as e:
+        logger.error(f"search_web function error: {e}")
+        return f"Web search failed: {str(e)}"
