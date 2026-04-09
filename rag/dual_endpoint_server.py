@@ -7,13 +7,12 @@ import logging
 import os
 import time
 from contextlib import asynccontextmanager
-from typing import Any, Dict, List, Optional
+from typing import Dict, List
 
 import lancedb
 import ollama
 import uvicorn
 from fastapi import FastAPI, HTTPException, Query, Request
-from fastapi.responses import StreamingResponse
 
 # --- Configuration ---
 DB_PATH = os.getenv("DB_PATH", "/opt/mcp/rag/")

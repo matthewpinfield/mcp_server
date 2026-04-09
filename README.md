@@ -1,6 +1,6 @@
 # MCP Server - Local LLM Agent System
 
-An intelligent Model Context Protocol (MCP) server that provides specialized tools and memory integration for local LLM deployment. Acts as middleware between chat clients and Ollama, with intelligent tool routing and 3-tier memory architecture.
+An intelligent Model Context Protocol (MCP) server that provides specialized tools and memory integration for local LLM deployment. Acts as middleware between chat clients and Ollama, with intelligent tool routing and sliding window memory architecture.
 
 ## Quick Start
 
@@ -26,7 +26,7 @@ python3 main.py
 ## Features
 
 - **9 Tool Categories**: Memory, RAG, Web Search, Git, GitHub, Development, Code Analysis, Sandbox, System
-- **3-Tier Memory**: Redis → MongoDB → ChromaDB with automatic migration
+- **Sliding Window Memory**: Redis (today) → LanceDB SSD (2-30 days) → LanceDB NAS (30+ days)
 - **Dual RAG System**: Flutter docs + code examples with vector search
 - **OpenAI Compatible**: `/v1/chat/completions` endpoint with streaming
 - **LangChain Integration**: ReAct agent with automatic tool selection
@@ -44,5 +44,5 @@ python3 main.py
 
 - Python 3.11+ with virtual environment
 - Ollama with qwen3:30b-a3b model
-- Optional: Redis, MongoDB, ChromaDB, Docker
+- Required: Redis, MongoDB for rules, LanceDB for memory storage
 

@@ -4,43 +4,15 @@ Chat API endpoint for Advanced MCP Server - Version 2
 Main chat_proxy endpoint with simplified Qwen3 integration
 """
 
-import asyncio
 import json
 import logging
 import time
-from typing import Any, AsyncGenerator, Dict, List
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
-from langchain import hub
-from langchain.agents import AgentExecutor, create_react_agent
-from langchain_community.chat_models import ChatOllama
-from langchain_core.messages import AIMessage, HumanMessage
-from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 
-from config import (
-    DEFAULT_MODEL,
-    DEFAULT_SLASH_COMMANDS,
-    LANGCHAIN_AGENT_TIMEOUT,
-    OLLAMA_API_BASE,
-)
+from config import DEFAULT_MODEL
 from core.orchestrator import orchestrate_request
-
-# Import all tools
-from tools import (
-    LangchainCodeSearchTool,
-    LangchainFlutterDocTool,
-    LangchainGitBranchTool,
-    LangchainGitCommitTool,
-    LangchainGitDiffTool,
-    LangchainGitLogTool,
-    LangchainGitStatusTool,
-    LangchainMemorySearchTool,
-    LangchainMemoryStatsTool,
-    LangchainWebSearchTool,
-    MultiLanguageSandboxTool,
-    SandboxStatsTool,
-)
 
 logger = logging.getLogger(__name__)
 
@@ -65,11 +37,10 @@ router = APIRouter()
 async def chat_proxy(request: Request):
     try:
         request_body = await request.json()
-        logger.info(f"TWINNY DEBUG - Full request body: {json.dumps(request_body, indent=2)}")
         requested_model_name = request_body.get("model", DEFAULT_MODEL)
         messages = request_body.get("messages", [])
         stream = request_body.get("stream", True)
-        logger.info(f"TWINNY DEBUG - Stream mode: {stream}, Model: {requested_model_name}")
+       
 
         if not messages:
             raise HTTPException(status_code=400, detail="Messages cannot be empty")
@@ -83,37 +54,32 @@ async def chat_proxy(request: Request):
             content = messages[-1].get("content")
             if isinstance(content, str):
                 user_message = content
-            elif isinstance(content, list) and content:
-                # Handle Twinny's array format: [{"type": "text", "text": "content"}]
-                for item in content:
-                    if isinstance(item, dict) and item.get("type") == "text":
-                        user_message = item.get("text", "")
-                        break
+            
 
         if not user_message:
             raise HTTPException(status_code=400, detail="No user message found")
 
+        # ZERO Continue injection - replace all messages with clean single message
+        original_msg_count = len(messages)
+        messages = [{"role": "user", "content": user_message}]
+        
+        # Clean Continue sessions to prevent future contamination
+        try:
+            import os
+            sessions_path = "/home/matthewpinfield/.continue/sessions"
+            if os.path.exists(sessions_path):
+                for f in os.listdir(sessions_path):
+                    if f.endswith(".json"):
+                        os.remove(os.path.join(sessions_path, f))
+        except: pass
+        
         logger.info(
-            f"Chat Request: Model='{requested_model_name}', Msgs={len(messages)}"
+            f"Chat Request: Model='{requested_model_name}', Msgs={original_msg_count}→{len(messages)} (filtered)"
         )
 
         if user_message.strip().startswith("/"):
-            parts = user_message.strip().split(" ", 1)
-            command = parts[0]
-            args = parts[1] if len(parts) > 1 else ""
-
-            try:
-                memory_tool = LangchainMemorySearchTool()
-                custom_commands_result = memory_tool._run("custom_slash_commands")
-                custom_commands = (
-                    json.loads(custom_commands_result) if custom_commands_result else {}
-                )
-            except:
-                custom_commands = {}
-
-            from tools.knowledge import process_slash_command
-
-            response_text = process_slash_command(command, args, custom_commands)
+            # Route slash commands through orchestrator for proper routing
+            response_text = await orchestrate_request(messages, user_message, requested_model_name)
 
             if stream:
 
@@ -155,55 +121,51 @@ async def chat_proxy(request: Request):
                     {"message": {"role": "assistant", "content": response_text}}
                 )
 
-        try:
-            conversation_id = (
-                request.headers.get("X-Conversation-ID") or f"chat_{int(time.time())}"
+        conversation_id = request.headers.get("X-Conversation-ID")
+        agent_response = await orchestrate_request(
+            messages, user_message, requested_model_name, conversation_id
+        )
+
+        formatted_response = format_response_for_continue(agent_response)
+
+        if stream:
+            async def agent_stream():
+                # Send the entire formatted response in a single chunk
+                # This preserves all markdown formatting, including newlines and code blocks
+                stream_chunk = {
+                    "id": "chatcmpl-agent",
+                    "object": "chat.completion.chunk",
+                    "created": int(time.time()),
+                    "model": requested_model_name,
+                    "choices": [
+                        {
+                            "index": 0,
+                            "delta": {"content": formatted_response},
+                            "finish_reason": None,
+                        }
+                    ],
+                }
+                yield f"data: {json.dumps(stream_chunk)}\n\n"
+
+                # Send the final chunk indicating the end of the stream
+                final_chunk = {
+                    "id": "chatcmpl-agent",
+                    "object": "chat.completion.chunk",
+                    "created": int(time.time()),
+                    "model": requested_model_name,
+                    "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+                }
+                yield f"data: {json.dumps(final_chunk)}\n\n"
+
+                # Standard OpenAI-compatible SSE termination
+                yield "data: [DONE]\n\n"
+
+            return StreamingResponse(
+                agent_stream(),
+                media_type="text/event-stream",
+                headers={"Content-Type": "text/event-stream"},
             )
-            agent_response = await orchestrate_request(
-                messages, user_message, requested_model_name, conversation_id
-            )
-
-            formatted_response = format_response_for_continue(agent_response)
-
-            if stream:
-
-                async def agent_stream():
-                    # Send the entire formatted response in a single chunk
-                    # This preserves all markdown formatting, including newlines and code blocks
-                    stream_chunk = {
-                        "id": "chatcmpl-agent",
-                        "object": "chat.completion.chunk",
-                        "created": int(time.time()),
-                        "model": requested_model_name,
-                        "choices": [
-                            {
-                                "index": 0,
-                                "delta": {"content": formatted_response},
-                                "finish_reason": None,
-                            }
-                        ],
-                    }
-                    yield f"data: {json.dumps(stream_chunk)}\n\n"
-
-                    # Send the final chunk indicating the end of the stream
-                    final_chunk = {
-                        "id": "chatcmpl-agent",
-                        "object": "chat.completion.chunk",
-                        "created": int(time.time()),
-                        "model": requested_model_name,
-                        "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
-                    }
-                    yield f"data: {json.dumps(final_chunk)}\n\n"
-
-                    # Standard OpenAI-compatible SSE termination
-                    yield "data: [DONE]\n\n"
-
-                return StreamingResponse(
-                    agent_stream(),
-                    media_type="text/event-stream",
-                    headers={"Content-Type": "text/event-stream"},
-                )
-            else:
+        else:
                 return JSONResponse(
                     {
                         "id": "chatcmpl-agent",
@@ -229,18 +191,14 @@ async def chat_proxy(request: Request):
                     }
                 )
 
-        except Exception as e:
-            logger.error(f"TWINNY DEBUG - Agent execution error: {e}")
-            logger.error(f"TWINNY DEBUG - Exception type: {type(e)}")
-            logger.error(f"TWINNY DEBUG - Full traceback:", exc_info=True)
-            raise HTTPException(
-                status_code=500, detail=f"Agent execution failed: {str(e)}"
-            )
+       
 
     except HTTPException:
         raise
     except Exception as e:
+        import traceback
         logger.error(f"Chat endpoint error: {e}")
+        logger.error(f"Full traceback: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 
@@ -280,22 +238,7 @@ async def legacy_completions(request: Request):
     return await chat_proxy(request)
 
 
-# --- END: Added Legacy Endpoint ---
 
-
-@router.get("/api/tags")
-async def get_tags():
-    """Return available models for Twinny compatibility"""
-    return {
-        "models": [
-            {
-                "name": DEFAULT_MODEL,
-                "modified_at": "2025-07-22T23:00:00Z",
-                "size": 18000000000,
-                "digest": "0b28110b7a33"
-            }
-        ]
-    }
 
 @router.get("/api/context-status")
 async def context_status():

@@ -36,8 +36,8 @@ from .github import (
     LangchainGitHubRepoSearchTool,
 )
 
-# Knowledge Tools
-from .knowledge import (
+# RAG Tools
+from .rag import (
     LangchainCodeSearchTool,
     LangchainFlutterDocTool,
 )
@@ -46,30 +46,89 @@ from .knowledge import (
 from .sandbox import MultiLanguageSandboxTool, SandboxStatsTool
 
 # Web Tools
-# FIX: Import the new decorator-based tool function, not the old class.
-from .web import search_web
+from .web import LangchainWebSearchTool
 
-# FIX: Update __all__ to export the correct tool name.
+# Memory Tools (Web-style two-step approach)
+from .memory import (
+    LangchainMemorySearchTool,
+    LangchainGetFullMemoryTool,
+    LangchainMemoryStatsTool,
+    LangchainSaveAgentNoteTool,
+    LangchainSearchAgentNotesTool,
+)
+
+# Rules Tools
+from .rules import (
+    LangchainAddRuleTool,
+    LangchainListRulesTool,
+    LangchainUpdateRuleTool,
+    LangchainDeleteRuleTool,
+)
+
 __all__ = [
+    # Git Tools
     "LangchainGitStatusTool",
     "LangchainGitDiffTool",
     "LangchainGitCommitTool",
     "LangchainGitBranchTool",
     "LangchainGitLogTool",
+    # Code Analysis Tools
     "LangchainAutoLinterTool",
     "LangchainRepoExploreTool",
     "LangchainDependencyAnalysisTool",
     "LangchainCodeMetricsTool",
     "LangchainSystemFileReaderTool",
+    # Development Tools
     "LangchainBuildCommandTool",
     "LangchainPackageSearchTool",
+    "LangchainDateTimeTool",
+    # Sandbox Tools
     "MultiLanguageSandboxTool",
     "SandboxStatsTool",
-    "search_web",
+    # Web Tools
+    "LangchainWebSearchTool",
+    # GitHub Tools
     "LangchainGitHubRepoSearchTool",
     "LangchainGitHubIssuesTool",
     "LangchainGitHubReleasesTool",
+    # RAG Tools
     "LangchainFlutterDocTool",
     "LangchainCodeSearchTool",
-    "LangchainDateTimeTool",
+    # Memory Tools
+    "LangchainMemorySearchTool",
+    "LangchainGetFullMemoryTool", 
+    "LangchainMemoryStatsTool",
+    "LangchainSaveAgentNoteTool",
+    "LangchainSearchAgentNotesTool",
+    # Rules Tools
+    "LangchainAddRuleTool",
+    "LangchainListRulesTool",
+    "LangchainUpdateRuleTool",
+    "LangchainDeleteRuleTool",
+]
+
+# Shared tool instances - created once at module load to avoid repeated instantiation
+# Only includes tools that are actually functional and accessible to the agent
+SHARED_TOOLS = [
+    # Git Tools
+    LangchainGitStatusTool(), LangchainGitDiffTool(), LangchainGitCommitTool(),
+    LangchainGitBranchTool(), LangchainGitLogTool(),
+    # Code Analysis Tools
+    LangchainAutoLinterTool(), LangchainRepoExploreTool(), LangchainDependencyAnalysisTool(),
+    LangchainCodeMetricsTool(), LangchainSystemFileReaderTool(),
+    # Development Tools
+    LangchainBuildCommandTool(), LangchainPackageSearchTool(), LangchainDateTimeTool(),
+    # Sandbox Tools
+    MultiLanguageSandboxTool(), SandboxStatsTool(),
+    # Web Tools
+    LangchainWebSearchTool(),
+    # GitHub Tools
+    LangchainGitHubRepoSearchTool(), LangchainGitHubIssuesTool(), LangchainGitHubReleasesTool(),
+    # RAG Tools
+    LangchainFlutterDocTool(), LangchainCodeSearchTool(),
+    # Memory Tools (two-step approach + stats + agent notes - user memory save is automatic via orchestrator)
+    LangchainMemorySearchTool(), LangchainGetFullMemoryTool(), LangchainMemoryStatsTool(),
+    LangchainSaveAgentNoteTool(), LangchainSearchAgentNotesTool(),
+    # Rules Tools (list only - add/update/delete handled via slash commands)
+    LangchainListRulesTool(),
 ]

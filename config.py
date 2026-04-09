@@ -8,28 +8,23 @@ import logging
 import os
 
 # --- Environment Variables Configuration ---
-RAG_SERVER_ENDPOINT = os.getenv(
-    "RAG_SERVER_ENDPOINT", "http://localhost:8008/search/docs"
-)
-RAG_CODE_ENDPOINT = os.getenv("RAG_CODE_ENDPOINT", "http://localhost:8008/search/code")
-OLLAMA_API_BASE = os.getenv("OLLAMA_API_BASE", "http://localhost:11434")
-OLLAMA_OPENAI_BASE = os.getenv("OLLAMA_OPENAI_BASE", "http://localhost:11434/v1")
-DEFAULT_MODEL = os.getenv("DEFAULT_MODEL", "qwen3:30b-a3b")
+RAG_SERVER_ENDPOINT = "http://localhost:8008/search/docs"
+RAG_CODE_ENDPOINT = "http://localhost:8008/search/code"
+OLLAMA_API_BASE = "http://localhost:11434"
+OLLAMA_OPENAI_BASE = "http://localhost:11434/v1"
+DEFAULT_MODEL = "gemma4:26b"
+temperature = 0.8  # Higher temperature for thinking models
 
-MAX_WORKERS = int(os.getenv("MAX_WORKERS", "3"))
-REQUEST_TIMEOUT = int(os.getenv("REQUEST_TIMEOUT", "180"))
-LANGCHAIN_AGENT_TIMEOUT = int(os.getenv("LANGCHAIN_AGENT_TIMEOUT", "240"))
-
-# LLM Configuration
-temperature = 0.7  # Higher temperature for thinking models
-timeout = LANGCHAIN_AGENT_TIMEOUT  # Use configured timeout (480 seconds)
-DIRECT_OLLAMA_TIMEOUT = int(os.getenv("DIRECT_OLLAMA_TIMEOUT", "180"))
+MAX_WORKERS = 3
+REQUEST_TIMEOUT = 180
+LANGCHAIN_AGENT_TIMEOUT = 240
+DIRECT_OLLAMA_TIMEOUT = 180
 
 
 # Server configuration
-MCP_SERVER_HOST = os.getenv("MCP_SERVER_HOST", "0.0.0.0")
-MCP_SERVER_PORT = int(os.getenv("MCP_SERVER_PORT", "8013"))
-DEBUG_VERBOSE = os.getenv("DEBUG_VERBOSE", "false").lower() == "true"
+MCP_SERVER_HOST = "0.0.0.0"
+MCP_SERVER_PORT = 8013
+DEBUG_VERBOSE = False
 
 # Logging configuration
 LOG_LEVEL = logging.DEBUG if DEBUG_VERBOSE else logging.INFO
@@ -41,7 +36,7 @@ GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
 
 # --- RAG Keywords Configuration ---
 DEFAULT_RAG_KEYWORDS = "flutter,dart,widget,state management,navigation,routing,buildrunner,firebase,api,documentation,code example,debug,error,fix,how to,what is,explain"
-RAG_KEYWORDS_STR = os.getenv("MCP_RAG_KEYWORDS", DEFAULT_RAG_KEYWORDS)
+RAG_KEYWORDS_STR = DEFAULT_RAG_KEYWORDS
 RAG_KEYWORDS = [
     keyword.strip().lower()
     for keyword in RAG_KEYWORDS_STR.split(",")
@@ -271,28 +266,29 @@ ENABLE_DYNAMIC_SCALING = True  # Set to False to revert to original limits
 AGENT_RESPONSE_TIMEOUT_WARNING = 25  # Warn if response takes >25s
 CONTEXT_SIZE_WARNING_THRESHOLD = 5000  # Warn if context >5k chars
 
-# --- Memory Architecture Configuration ---
-# Models
-MEMORY_SUMMARIZATION_MODEL = "gemma3:4b"  # Model for summarizing memories
-MEMORY_MAIN_MODEL = DEFAULT_MODEL  # Main model for execution
 
 # Memory Retrieval Settings
 MEMORY_RETRIEVAL_LIMIT = 3  # Number of memories to retrieve
 MEMORY_SUMMARY_MAX_TOKENS = 500  # Max tokens for summary
 MEMORY_CONTEXT_MAX_TOKENS = 1000  # Max tokens for final context
 
-# Redis Configuration
+# Database Base Path - All databases use direct file paths
+DATABASE_BASE_PATH = "/mnt/caseSSD/mcp_server_data"
+
+# Redis Configuration - Maintain existing variable names, point to data directory
+REDIS_DATA_PATH = os.path.join(DATABASE_BASE_PATH, "redis_data")
 REDIS_HOST = "localhost"
 REDIS_PORT = 6379
 REDIS_DB = 0
 REDIS_TIMEOUT = 5
 
-# MongoDB Configuration
+# MongoDB Configuration - Maintain existing variable names, use existing service with data path
+MONGODB_DATA_PATH = os.path.join(DATABASE_BASE_PATH, "tier2_mongodb")
 MONGODB_URI = "mongodb://localhost:27017/"
 MONGODB_DATABASE = "mcp_memory"
 
 # LanceDB Configuration
-LANCEDB_TIER3_PATH = "/mnt/caseSSD/mcp_server_project/tier3_memory_lancedb"
+LANCEDB_TIER3_PATH = "/mnt/caseSSD/mcp_server_data/tier3_memory_db"
 LANCEDB_NAS_PATH = "/mnt/my_nas_mcp_share/archives/lancedb_archive"
 
 # Embedding Model
@@ -460,3 +456,28 @@ DEFAULT_SLASH_COMMANDS = {
         "action": "set_project",
     },
 }
+
+# --- LLM Instance Caching ---
+# Cached LLM instances to avoid repeated model loading per request
+_llm_cache = {}
+
+
+def get_cached_llm(model_name: str):
+    """
+    Get cached LLM instance or create new one if not exists.
+    Implements singleton pattern to avoid loading same model multiple times.
+    """
+    if model_name not in _llm_cache:
+        from langchain_ollama import ChatOllama
+
+        logging.getLogger(__name__).info(
+            f"Creating new LLM instance for model: {model_name}"
+        )
+        _llm_cache[model_name] = ChatOllama(
+            model=model_name, base_url=OLLAMA_API_BASE, timeout=LANGCHAIN_AGENT_TIMEOUT
+        )
+    else:
+        logging.getLogger(__name__).debug(
+            f"Using cached LLM instance for model: {model_name}"
+        )
+    return _llm_cache[model_name]

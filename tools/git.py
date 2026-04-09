@@ -10,7 +10,7 @@ Provides unified interface for git operations like status, diff, commit, branch,
 import logging
 import os
 import subprocess
-from typing import Any, Dict, List, Optional, Type
+from typing import Optional, Type
 
 from pydantic import BaseModel, Field
 
