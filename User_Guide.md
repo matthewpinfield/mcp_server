@@ -214,12 +214,12 @@ Supports: npm, Flutter, Python, Rust, Maven, Gradle, Make, CMake
 - No need to specify which tool to use
 - Intelligent context awareness
 
-### **3-Tier Memory System**
-- **Tier 1 (Redis)**: Current conversation context and working memory
-- **Tier 2 (MongoDB)**: Permanent user profile, rules, and preferences  
-- **Tier 3 (ChromaDB)**: Long-term conversation archive on NAS
-- **Correction Learning**: Use `/correct <text>` to teach the AI from mistakes
-- **Personalized Responses**: AI adapts to your preferences and rules automatically
+### **Sliding Window Memory System**
+- **Redis**: Today's discrete conversation turns (automatic context injection)
+- **LanceDB SSD**: Days 2-30 with semantic search via embeddings
+- **LanceDB NAS**: 30+ days archival storage with embeddings
+- **Rules System**: MongoDB stores permanent user preferences (separate from memory)
+- **Automatic Context**: Agent knows recent conversation without searching
 
 ### **Context Window Management & Auto-Compaction**
 - **Dynamic Context Detection**: Automatically detects model context limits from Ollama

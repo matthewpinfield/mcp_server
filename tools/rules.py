@@ -14,7 +14,7 @@ Rules are like a notebook:
 
 import logging
 from datetime import datetime
-from typing import Dict, List, Optional, Type
+from typing import Dict, Optional, Type
 
 import pymongo
 from pydantic import BaseModel, Field
@@ -38,7 +38,7 @@ def get_rules_db():
             mongo_client = pymongo.MongoClient(MONGODB_URI, serverSelectionTimeoutMS=5000)
             mongo_client.admin.command("ping")
             mongo_db = mongo_client[MONGODB_DATABASE]
-            rules_collection = mongo_db.profiles
+            rules_collection = mongo_db.user_rules
             
             # Create index for fast lookups
             rules_collection.create_index("user_id")
@@ -225,6 +225,14 @@ def get_rules_manager() -> RulesManager:
         _rules_manager = RulesManager()
     return _rules_manager
 
+# Global cache for user rules
+_cached_user_rules = None
+
+def invalidate_rules_cache():
+    """Invalidate rules cache when rules are modified"""
+    global _cached_user_rules
+    _cached_user_rules = None
+
 # ===== LANGCHAIN TOOLS =====
 
 class AddRuleSchema(BaseModel):
@@ -244,6 +252,7 @@ class LangchainAddRuleTool(AsyncTool):
         try:
             result = get_rules_manager().add_rule(rule_text, category)
             if result["status"] == "success":
+                invalidate_rules_cache()  # Invalidate cache when rules change
                 return f"✅ Added rule: {rule_text}\nRule ID: {result['rule_id']}"
             else:
                 return f"❌ Failed to add rule: {result['error']}"
@@ -275,9 +284,8 @@ class LangchainListRulesTool(AsyncTool):
                 
                 for rule in rules:
                     cat = rule.get("category", "general")
-                    created = rule.get("added_at", "").strftime("%Y-%m-%d") if rule.get("added_at") else "unknown"
-                    output.append(f"• [{cat.upper()}] {rule['rule']}")
-                    output.append(f"  ID: {rule['id']} | Created: {created}")
+                    rule_id = rule.get("id", "unknown")
+                    output.append(f"[{rule_id}] [{cat.upper()}] {rule['rule']}")
                     output.append("")
                 
                 return "\n".join(output)
@@ -302,6 +310,7 @@ class LangchainUpdateRuleTool(AsyncTool):
         try:
             result = get_rules_manager().update_rule(rule_id, new_text)
             if result["status"] == "success":
+                invalidate_rules_cache()  # Invalidate cache when rules change
                 return f"✅ Updated rule {rule_id}: {new_text}"
             else:
                 return f"❌ Failed to update rule: {result['error']}"
@@ -323,11 +332,88 @@ class LangchainDeleteRuleTool(AsyncTool):
         try:
             result = get_rules_manager().delete_rule(rule_id)
             if result["status"] == "success":
+                invalidate_rules_cache()  # Invalidate cache when rules change
                 return f"✅ Deleted rule {rule_id}"
             else:
                 return f"❌ Failed to delete rule: {result['error']}"
         except Exception as e:
             return f"❌ Error deleting rule: {str(e)}"
+
+# ===== SLASH COMMANDS =====
+
+def process_rules_slash_command(command: str, args: str) -> str:
+    """Process rules-related slash commands"""
+    
+    if command == "/list_rules":
+        try:
+            result = get_rules_manager().list_rules()
+            if result["status"] == "success":
+                rules = result["rules"]
+                if not rules:
+                    return "📝 No rules found in the notebook."
+                
+                output = [f"📝 User Rules ({result['count']} total):"]
+                output.append("")
+                
+                for rule in rules:
+                    cat = rule.get("category", "general")
+                    rule_id = rule.get("id", "unknown")
+                    output.append(f"[{rule_id}] [{cat.upper()}] {rule['rule']}")
+                    output.append("")
+                
+                return "\n".join(output)
+            else:
+                return f"❌ Error listing rules: {result['error']}"
+        except Exception as e:
+            return f"❌ Error listing rules: {str(e)}"
+    
+    elif command == "/rule":
+        if args:
+            try:
+                result = get_rules_manager().add_rule(args)
+                if result["status"] == "success":
+                    invalidate_rules_cache()  # Invalidate cache when rules change
+                    return f"✅ Added rule: {args}\nRule ID: {result['rule_id']}"
+                else:
+                    return f"❌ Failed to add rule: {result['error']}"
+            except Exception as e:
+                return f"❌ Error adding rule: {str(e)}"
+        else:
+            return "Usage: /rule <rule text>"
+    
+    elif command == "/delete_rule":
+        if args:
+            try:
+                result = get_rules_manager().delete_rule(args)
+                if result["status"] == "success":
+                    invalidate_rules_cache()  # Invalidate cache when rules change
+                    return f"✅ Deleted rule {args}"
+                else:
+                    return f"❌ Failed to delete rule: {result['error']}"
+            except Exception as e:
+                return f"❌ Error deleting rule: {str(e)}"
+        else:
+            return "Usage: /delete_rule <rule_id>"
+    
+    elif command == "/change_rule":
+        if args and " " in args:
+            parts = args.split(" ", 1)
+            rule_id = parts[0]
+            new_text = parts[1]
+            try:
+                result = get_rules_manager().update_rule(rule_id, new_text)
+                if result["status"] == "success":
+                    invalidate_rules_cache()  # Invalidate cache when rules change
+                    return f"✅ Updated rule {rule_id}: {new_text}"
+                else:
+                    return f"❌ Failed to update rule: {result['error']}"
+            except Exception as e:
+                return f"❌ Error updating rule: {str(e)}"
+        else:
+            return "Usage: /change_rule <rule_id> <new text>"
+    
+    else:
+        return f"Unknown rules command '{command}'. Available: /rule, /list_rules, /delete_rule, /change_rule"
 
 # ===== STARTUP FUNCTIONS =====
 
@@ -346,5 +432,23 @@ def load_user_rules() -> str:
         return "Error loading user rules"
 
 def get_user_rules() -> str:
-    """Get formatted user rules for system prompt"""
-    return load_user_rules()
+    """Get formatted user rules for system prompt with caching"""
+    global _cached_user_rules
+    
+    if _cached_user_rules is not None:
+        return _cached_user_rules
+    
+    try:
+        result = get_rules_manager().get_rules_summary()
+        if result["status"] == "success":
+            _cached_user_rules = result["summary"]
+            logger.info(f"Cached {result['count']} user rules from rules system")
+            return _cached_user_rules
+        else:
+            logger.warning(f"Failed to load user rules: {result['error']}")
+            _cached_user_rules = "No user rules available"
+            return _cached_user_rules
+    except Exception as e:
+        logger.error(f"Error loading user rules: {e}")
+        _cached_user_rules = "Error loading user rules"
+        return _cached_user_rules

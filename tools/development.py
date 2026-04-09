@@ -8,13 +8,11 @@ This module contains development workflow tools as per mcp_engineering_plan.md:
 - PackageSearchTool (from package.py)
 """
 
-import json
 import logging
-import os
 import subprocess
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, Optional, Type
+from typing import Optional, Type
 
 import requests
 from pydantic import BaseModel, Field

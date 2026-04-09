@@ -8,7 +8,6 @@ import os
 # Suppress specific LanceDB nprobes warnings BEFORE any imports
 os.environ["RUST_LOG"] = "lance::dataset::scanner=error"
 
-import asyncio
 import logging
 import signal
 import sys
@@ -18,6 +17,8 @@ from contextlib import asynccontextmanager
 import requests  # Added for dependency checks
 import uvicorn
 from dotenv import load_dotenv
+from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.triggers.cron import CronTrigger
 
 load_dotenv()
 
@@ -48,7 +49,7 @@ class ColoredFormatter(logging.Formatter):
         "api.chat": "\033[94m",  # Blue for API
         "core.orchestrator": "\033[95m",  # Purple for Agent
         "tools.web": "\033[93m",  # Yellow for Web Search
-        "tools.knowledge": "\033[92m",  # Green for Memory/Knowledge
+        "tools.rag": "\033[92m",  # Green for RAG Tools
         "tools.sandbox": "\033[91m",  # Red for Sandbox
         "tools.git": "\033[96m",  # Cyan for Git
         "tools.github": "\033[97m",  # White for GitHub
@@ -156,6 +157,24 @@ async def lifespan(app: FastAPI):
 
     # Check RAG dependency (optional)
     await check_rag_service()
+    
+    # Start background summary worker
+    import subprocess
+    import threading
+    import os
+    
+    def start_summary_worker():
+        try:
+            subprocess.Popen([
+                sys.executable, "summary_worker.py"
+            ], cwd=os.getcwd())
+            print("INFO:     Summary worker started automatically")
+        except Exception as e:
+            print(f"WARN:     Failed to start summary worker: {e}")
+    
+    # Start worker in background thread
+    worker_thread = threading.Thread(target=start_summary_worker, daemon=True)
+    worker_thread.start()
 
     # Check memory system with proper inventory
     try:
@@ -208,10 +227,28 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         print(f"INFO:     [WARN] Memory system check: {e}")
 
+    # Start daily batch transfer scheduler
+    scheduler = None
+    try:
+        from tools.memory import run_daily_maintenance
+        scheduler = BackgroundScheduler()
+        scheduler.add_job(
+            func=run_daily_maintenance,
+            trigger=CronTrigger(hour=2, minute=0),
+            id='daily_memory_transfer',
+            replace_existing=True
+        )
+        scheduler.start()
+        print("INFO:     [ OK ] Daily memory transfer scheduler started")
+    except Exception as e:
+        print(f"INFO:     [WARN] Scheduler setup failed: {e}")
+
     yield
 
     # Shutdown
     logger.info("Shutting down MCP Server...")
+    if scheduler:
+        scheduler.shutdown()
     executor.shutdown(wait=True)
 
 

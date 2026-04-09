@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 3. you cannot use the sudo command so ask the user to run the command and repoert back 
 4. Use clear, concise trains of thought
 5. Use websearch to ensure to pass 100% true facts
-6. Always use todo lists to break down tasks into smaller bites
+6. Always use claude_todo.md to maintain a constant non memory reliant list. 
 7. Adhere strictly to MVP principles
 8. NO new files to be added to the exiting file structure unless approved, this exludes backups and test files
 9. Do not alter a existing file, use a sandbox protocol and create and test from back ups not original files.  Create an .md that lists all changes made so we can always go back. 
@@ -17,9 +17,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 12. The /superceeded folder has code from before the main code of 5000 lines was split into its current form,  it is a good source of good code.
 13. a fix is never ready till its tested against its actual purpose, example does it actually search the internet, recall a memory.
 14. confirming a file does not crash on startup is not the same as testing if the fix actually works.. see ## Proven Issue Resolution Methodology
+15. DO NOT WAIT MORE THAN 10 SECONDS BETWEEN SERVER STARTUP AND TEST CODE EXECUTION. THIS IS TIME WASTING, ANNOYING AND POINTLESS
+16. IMPORTANT DO NOT END CONVERSATIONS TELLING THE USER SOMETHING DOES NOT WORK OR IS BROKEN AS THIS IS 100% WRONG, END YOU CONVERSATIONS IF YOU FIND AN ERROR WITH A PROPOSED FIX ONCE YOU HAVE SEARCHED FOR ONLINE FOR THE DEFINETIVE ANSWER. 
+17. you are a highly experienced coding agent you are the best at code generation and debugging, you adhere to best principles of coding and always adhere to mvp conduct.
+18. use you internal websearch tool to always look for the most recent 2025 solution as this is newer than your training date. 
+use you internal websearch tool to always look for the most recent 2025 solution as this is newer than your training date. use small incremental changes to code and test, do not change huge chuncks of code. ensure all existing functions name remain the same during refactoring. use your linter tools as you code to keep code clean.
+19. use ALL linter tools as you code to keep code clean.
+20. use claude_todo.md as a permanent todo list use this rather than the inline chat version. this ensure you do not forget across sessions.
 
 
-## Program Structure
+## Program Structure IMPORTANT YOU NEED TO UNDERSTAND THIS BEFORE ATTEMPTING TO WRITE ANY CODE. 
 
 mcp_server_project/
 ├── rag 
@@ -30,8 +37,6 @@ mcp_server_project/
 │   └── chat.py                  # The /api/chat endpoint
 ├── core/
 │   ├── orchestrator.py          # The "brain" - request routing & tool execution loop
-│   ├── workflows.py             # The sequential WorkflowEngine (if needed)
-│   └── memory_integration.py    # Functions for prompt enhancement
 ├── tools/
 │   ├── __init__.py              # Makes 'tools' a package
 │   ├── base.py                  # The new `AsyncTool` base class
@@ -45,7 +50,7 @@ mcp_server_project/
 └── utils/
     ├── __init__.py
     ├── subprocess_helper.py
-    └── file_system_helper.py
+    └── base_tool.py
 
 
 ## Development Commands
@@ -75,7 +80,7 @@ pip install -r requirements.txt # the rag has its own requirements.txt
 No formal test framework is configured. Test functionality through the API endpoints.
 
 ### Linting/Code Quality
-No automated linting is configured. Follow Python best practices and existing code style.
+No automated linting is configured. Use all the tools we have installed within the codebase.
 
 ## Architecture Overview
 
@@ -105,13 +110,15 @@ This is an **MCP (Model Context Protocol) Server** that provides an intelligent 
    - LanceDB vector storage with ~17k documents total
    - Ollama embeddings integration for semantic search
 
-5. **Memory System** (3-tier architecture via `tools/knowledge.py`)
-   - **Tier 1**: Redis (session context, recent interactions) 
-   - **Tier 2**: MongoDB (rules, long-term patterns)  
-   - **Tier 3**: ChromaDB (semantic memory, conversation history)
+5. **Memory System** (Sliding window architecture via `tools/memory.py`)
+   - **Redis**: Today's memories only (discrete turns, not accumulated conversations)
+   - **LanceDB SSD**: Days 2-30 (with embeddings for semantic search)
+   - **LanceDB NAS**: 30+ days (archival with embeddings)
+   - **Rules System**: MongoDB via `tools/rules.py` (separate from memory)
 
-   # Tier 1 Moves to Tier 3 after 14 days on a rolling order so there are always 14days of memories in Tier 1. 
-      They then move to Tier3 where they are stored till then move to Tier3 NAS Storage. All memories are acceessable and are never deleted. 
+   Daily batch transfer moves memories from Redis → LanceDB SSD → LanceDB NAS.
+   Each conversation turn is stored as separate memory (no exponential growth).
+   Agent gets automatic context from recent memories without searching. 
 
 ### Tool Categories
 
@@ -142,9 +149,9 @@ The system intelligently activates tool categories based on message analysis:
 
 - **Ollama**: Required LLM service with specified model availability
 - **RAG Service**: Must be running on port 8008 for knowledge retrieval
-- **Redis**: Tier 1 memory
-- **MongoDB**: Tier 2 memory
-- **ChromaDB**: Tier 3 memory moves to Tier 3 NAS
+- **Redis**: Today's discrete memories  
+- **MongoDB**: User rules (separate system)
+- **LanceDB**: Historical memories with embeddings (SSD + NAS)
 
 ### Integration Points
 
@@ -162,9 +169,7 @@ The system is designed for production deployment with proper error handling, log
 ### 1. **Real Functional Testing vs Existence Testing**
 - Never test if something "exists" - test if it actually **works**
 - Use specific, verifiable test cases with expected answers:
-  - "when did Harold Lloyd die" → expect "1971"
-  - "where is lead on periodic table" → expect "82" or "Pb"
-- If you can't verify the answer is correct, the test is useless
+ - If you can't verify the answer is correct, the test is useless
 
 ### 2. **One Thing At A Time (Critical Rule)**
 - Fix **exactly one** specific issue

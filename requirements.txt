@@ -16,6 +16,8 @@ lancedb==0.23.0
 langchain==0.2.0
 langchain-community==0.2.0
 langchain-core==0.2.0
+langchain-ollama==0.3.6
+apscheduler==3.10.4
 matplotlib==3.8.0
 numpy==2.3.0
 ollama==0.5.1
