@@ -1,0 +1,83 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual Environment
+.venv/
+venv/
+ENV/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+error_logs.txt
+mcp_error_logs.txt
+llm_output.txt
+rag_output.txt
+
+# Dart/Flutter
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+pubspec.lock
+
+# Database files (keep structure but not data)
+rag/test_chroma/
+rag/backup_and_test/
+rag/venv/
+rag/lancedb_data/*.lance/data/
+rag/chroma_db_link
+
+# Large database files - runtime data, not source code
+docker_mongo_data/
+lancedb_data/
+*.sqlite3
+*.db
+
+# MongoDB WiredTiger files
+WiredTiger*
+*.wt
+
+# Vector database files
+*.lance
+chroma.sqlite3
+
+# Sensitive files
+*.key
+*.pem
+*.env
+config.yaml
+
+# Local-only historical/dev-process notes
+/archive/
+/superceeded/

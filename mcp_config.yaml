@@ -1,0 +1,29 @@
+# MCP Server System Configuration
+# Single source of truth for all services
+
+models:
+  default: "gemma4:26b"
+  embedding: "nomic-embed-text:latest"
+
+endpoints:
+  ollama_api: "http://localhost:11434"
+  ollama_openai: "http://localhost:11434/v1"
+  rag_server: "http://localhost:8008/search/docs"
+
+databases:
+  path: "/opt/mcp-performance/rag/lancedb_data/"
+  flutter_table: "flutter_dart_knowledge"
+  mixed_table: "expert_py_flutter_dart_final"
+
+timeouts:
+  request: 60
+  embedding: 30
+  llm: 30
+  langchain_agent: 180
+  direct_ollama: 90
+
+workers:
+  max: 3
+
+rag:
+  keywords: "flutter,dart,widget,state management,navigation,routing,buildrunner,firebase,api,documentation,code example,debug,error,fix,how to,what is,explain"
