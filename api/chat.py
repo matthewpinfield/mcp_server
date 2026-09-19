@@ -12,7 +12,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from config import DEFAULT_MODEL
-from core.orchestrator import orchestrate_request
+from core.orchestrator import orchestrate_request, direct_completion, DIRECT_COMPLETION_MODEL
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +44,64 @@ async def chat_proxy(request: Request):
 
         if not messages:
             raise HTTPException(status_code=400, detail="Messages cannot be empty")
+
+        if requested_model_name == DIRECT_COMPLETION_MODEL:
+            logger.info(f"Direct completion (Edit/Apply): Msgs={len(messages)}")
+
+            if stream:
+                async def direct_stream():
+                    async for chunk in direct_completion(messages):
+                        stream_chunk = {
+                            "id": "chatcmpl-direct",
+                            "object": "chat.completion.chunk",
+                            "created": int(time.time()),
+                            "model": requested_model_name,
+                            "choices": [
+                                {"index": 0, "delta": {"content": chunk}, "finish_reason": None}
+                            ],
+                        }
+                        yield f"data: {json.dumps(stream_chunk)}\n\n"
+
+                    final_chunk = {
+                        "id": "chatcmpl-direct",
+                        "object": "chat.completion.chunk",
+                        "created": int(time.time()),
+                        "model": requested_model_name,
+                        "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+                    }
+                    yield f"data: {json.dumps(final_chunk)}\n\n"
+                    yield "data: [DONE]\n\n"
+
+                return StreamingResponse(
+                    direct_stream(),
+                    media_type="text/event-stream",
+                    headers={"Content-Type": "text/event-stream"},
+                )
+            else:
+                full_response = ""
+                async for chunk in direct_completion(messages):
+                    full_response += chunk
+
+                return JSONResponse(
+                    {
+                        "id": "chatcmpl-direct",
+                        "object": "chat.completion",
+                        "created": int(time.time()),
+                        "model": requested_model_name,
+                        "choices": [
+                            {
+                                "index": 0,
+                                "message": {"role": "assistant", "content": full_response},
+                                "finish_reason": "stop",
+                            }
+                        ],
+                        "usage": {
+                            "prompt_tokens": 0,
+                            "completion_tokens": len(full_response) // 4,
+                            "total_tokens": len(full_response) // 4,
+                        },
+                    }
+                )
 
         user_message = ""
         if (
