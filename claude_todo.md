@@ -4,6 +4,62 @@ NEVER MARK A ITEM AS COMPLETE TILL YOU HAVE TESTED IT FULLY AS PER CLAUDE.md tes
 
 ---
 
+## Session 2026-09-19 (part 20): Fixed "import pytest could not be resolved" in iceMap
+
+User asked what pytest was, then reported the agent "could not manage" to fix an
+unresolved pytest import in the iceMap project it's building.
+
+### Root cause
+- [x] `.vscode/settings.json` pointed the project at the SYSTEM Python, which
+  had zero packages installed (confirmed: `ModuleNotFoundError: No module
+  named 'pytest'`). No venv existed anywhere in the project.
+- [x] Found why the agent couldn't fix this itself: `build_command`'s
+  Python "install" action was hardcoded to `pip install -r requirements.txt`
+  - iceMap uses modern `pyproject.toml` with no `requirements.txt` at all,
+    so it failed immediately every time.
+  - There was no capability anywhere to CREATE a virtual environment - even
+    if the requirements.txt command had worked, it would've installed into
+    whatever bare "pip" resolved to on PATH (this server's own environment),
+    not an isolated env for the target project.
+  - `pytest`/`pytest-asyncio` weren't even listed as dependencies anywhere
+    in iceMap's `pyproject.toml`, despite the tests already using
+    `@pytest.mark.asyncio` and `asyncio_mode = "auto"`.
+
+### Fixes
+- [x] `tools/development.py`: `build_command`'s Python "install" now: creates
+  a `.venv` if one doesn't exist, detects `requirements.txt` vs
+  `pyproject.toml` and uses the right install command, and parses
+  `pyproject.toml` (via stdlib `tomllib`) to auto-include a `dev` optional-
+  dependencies group if the project declares one (`pip install -e ".[dev]"`)
+  instead of just the base package. "run"/"test"/"build" now use the
+  project's own venv python instead of the bare system one. Raised the
+  install timeout to 900s (native builds like rasterio/geopandas are slow).
+- [x] Added a `dev` extras group (`pytest`, `pytest-asyncio`) to iceMap's own
+  `pyproject.toml`, since it was referencing pytest features without ever
+  declaring the dependency.
+- [x] Actually ran the fixed install for real against iceMap (not just a
+  unit test): created `/home/matthewpinfield/iceMap/.venv`, installed all
+  ~90 real dependencies (fastapi, rasterio, geopandas, chromadb, pystac,
+  etc.) successfully, then installed the dev extras. Updated
+  `.vscode/settings.json` to point at the new venv.
+- [x] **TESTED**: `pytest` now genuinely resolves and runs
+  (`pytest-9.1.1`, plugins loaded correctly). Re-ran `install` a second
+  time to confirm idempotency - correctly reused the existing venv and
+  picked the `.[dev]` target without recreating anything. `test`/`run`
+  commands confirmed to use the venv's python (`/home/matthewpinfield/
+  iceMap/.venv/bin/python`), not the bare system one. Regression-tested
+  `detect` against this project (which already has its own working venv) -
+  unaffected.
+- Found while testing, NOT fixed (out of scope - genuine application bugs,
+  not an environment/tooling problem): `tests/test_ingestion.py` imports a
+  `src.orchestration.pipeline` module that doesn't exist anywhere in the
+  project, and `tests/test_processing.py` imports a `calculate_ndsi`
+  function that isn't defined in `src/processing/geospatial.py`. These are
+  incomplete-implementation issues for whoever continues building iceMap,
+  not something this session's fix should paper over.
+
+---
+
 ## Session 2026-09-19 (part 19): Fixed Apply filepath resolution (real root cause) + package.json write_file loop
 
 ### "Could not resolve filepath to apply changes" - my earlier fix was incomplete

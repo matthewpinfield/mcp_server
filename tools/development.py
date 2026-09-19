@@ -150,6 +150,21 @@ class LangchainBuildCommandTool(AsyncTool):
             return "python"
         return None
 
+    def _get_venv_python_pip(self, project_path: Path):
+        """
+        Prefer an existing project-local .venv/venv over the bare system
+        python/pip, so installs and runs land in the right isolated
+        environment instead of leaking into whatever environment this
+        server's own process happens to be running under.
+        """
+        for venv_name in [".venv", "venv"]:
+            venv_dir = project_path / venv_name
+            python_exe = venv_dir / "bin" / "python"
+            pip_exe = venv_dir / "bin" / "pip"
+            if python_exe.exists() and pip_exe.exists():
+                return str(python_exe), str(pip_exe)
+        return "python3", "pip"
+
     def _execute_build_command(
         self,
         project_path: Path,
@@ -230,8 +245,49 @@ class LangchainBuildCommandTool(AsyncTool):
                 # Default to APK, but allow override
                 if not options:
                     cmd = ["flutter", "build", "apk"]
+            elif project_type == "python" and command == "install":
+                # No venv-creation or pyproject.toml support existed here
+                # before - "install" was hardcoded to `pip install -r
+                # requirements.txt`, which fails outright for any modern
+                # pyproject.toml-based project, and always ran against
+                # whatever bare "pip" was on PATH (this server's own venv)
+                # instead of an isolated environment for the target project.
+                venv_dir = project_path / ".venv"
+                python_exe, pip_exe = self._get_venv_python_pip(project_path)
+                if python_exe == "python3":  # no venv found yet - create one
+                    logger.info(f"No venv found for {project_path}, creating one at {venv_dir}")
+                    create_result = subprocess.run(
+                        ["python3", "-m", "venv", str(venv_dir)],
+                        cwd=project_path, capture_output=True, text=True, timeout=120,
+                    )
+                    if create_result.returncode != 0:
+                        return f"❌ **Error**: Failed to create virtual environment:\n```\n{create_result.stderr}\n```"
+                    python_exe, pip_exe = self._get_venv_python_pip(project_path)
+
+                if (project_path / "requirements.txt").exists():
+                    cmd = [pip_exe, "install", "-r", "requirements.txt"]
+                elif (project_path / "pyproject.toml").exists():
+                    # Include the "dev" extra (e.g. pytest) if the project
+                    # declares one, so tests actually work after install
+                    # instead of needing a separate manual step.
+                    install_target = "."
+                    try:
+                        import tomllib
+
+                        with open(project_path / "pyproject.toml", "rb") as f:
+                            pyproject = tomllib.load(f)
+                        if "dev" in pyproject.get("project", {}).get("optional-dependencies", {}):
+                            install_target = ".[dev]"
+                    except Exception as e:
+                        logger.warning(f"Could not parse pyproject.toml for optional-dependencies: {e}")
+                    cmd = [pip_exe, "install", "-e", install_target]
+                else:
+                    return "No requirements.txt or pyproject.toml found to install from"
+                if options:
+                    cmd.extend(options.split())
             elif project_type == "python" and command == "run":
                 # Try to find main entry point
+                python_exe, _ = self._get_venv_python_pip(project_path)
                 main_files = ["main.py", "app.py", "run.py"]
                 entry_point = None
                 for main_file in main_files:
@@ -239,9 +295,20 @@ class LangchainBuildCommandTool(AsyncTool):
                         entry_point = main_file
                         break
                 if entry_point:
-                    cmd = ["python", entry_point]
+                    cmd = [python_exe, entry_point]
                 else:
                     return "No main entry point found (main.py, app.py, run.py)"
+            elif project_type == "python" and command in ("test", "build"):
+                # Use the project's own venv python if one exists, instead
+                # of the bare "python" that resolves to whatever environment
+                # this server happens to be running under.
+                python_exe, _ = self._get_venv_python_pip(project_path)
+                cmd = [python_exe if c == "python" else c for c in cmd]
+
+            # Heavy Python installs (rasterio, geopandas, etc. build native
+            # extensions) can take much longer than the default 5-minute
+            # timeout - give installs more room.
+            timeout = 900 if (project_type == "python" and command == "install") else 300
 
             # Execute command
             logger.info(f"Executing: {' '.join(cmd)} in {project_path}")
@@ -251,7 +318,7 @@ class LangchainBuildCommandTool(AsyncTool):
                 cwd=project_path,
                 capture_output=True,
                 text=True,
-                timeout=300,  # 5 minute timeout
+                timeout=timeout,
             )
 
             # Format response
@@ -275,7 +342,7 @@ class LangchainBuildCommandTool(AsyncTool):
             return response
 
         except subprocess.TimeoutExpired:
-            return f"❌ **Timeout**: {command} command timed out after 5 minutes"
+            return f"❌ **Timeout**: {command} command timed out after {timeout}s"
         except FileNotFoundError as e:
             return f"❌ **Tool Not Found**: {e}. Make sure required tools are installed and in PATH."
         except Exception as e:
