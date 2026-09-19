@@ -4,6 +4,49 @@ NEVER MARK A ITEM AS COMPLETE TILL YOU HAVE TESTED IT FULLY AS PER CLAUDE.md tes
 
 ---
 
+## Session 2026-09-19 (part 15): Fixed "No response generated" ("well its dead now")
+
+User's live session started returning "No response generated" repeatedly after
+"continue" - a totally blank chat response with no error and no explanation.
+
+### Root cause chain (found via direct reproduction, not guessed)
+- [x] Pulled the user's actual live Continue session file and found the exact
+  failing exchange, then extracted its real 72-message history (176,860
+  chars, ~44,000 estimated tokens - already OVER the model's configured
+  32,768 context window) to build a faithful repro.
+- [x] Fed this real history through `orchestrate_request` repeatedly (matches
+  "no response generated again" happening more than once live). Found the
+  existing nudge-retry logic (from earlier this session) had a real gap:
+  `if tool_called: break` treated ANY tool invocation as automatically
+  "done," even when the agent's FINAL text after that tool call was
+  completely empty. Confirmed via targeted debug logging (had to explicitly
+  set `logging.basicConfig(level=logging.INFO)` in the repro script -
+  otherwise `logger.info` calls are silently suppressed and look identical
+  to "code path never reached", which cost real debugging time) that this
+  exact path - tool succeeded, zero closing summary text - was firing on
+  every failing trial.
+- [x] **FIXED**: when a tool call succeeds but produces no summary text,
+  do NOT re-invoke the agent (retrying risks duplicate side effects - e.g.
+  re-writing the same file, re-running a git command) - instead append a
+  safe, honest fallback note ("That action completed, though I didn't
+  generate a closing summary") so the user always sees SOMETHING rather
+  than a bare, unexplained "No response generated".
+- [x] **TESTED** against the real 44K-token history repeatedly: ran 5+ fresh
+  trials post-fix, zero occurrences of "No response generated" - every
+  trial produced either a real substantive response, a successful
+  nudge-recovery, or the new fallback note. Also regression-tested the
+  simple 3-file build case (well under context limits) - still completes
+  correctly and fast (6.6s), confirming the fix doesn't interfere with
+  normal successful turns.
+- Noted but not actioned: the underlying ~44K-token-over-32K-context-window
+  condition is itself a real problem (Ollama has to silently drop/truncate
+  something to fit) - this fix stops it from presenting as a dead, blank
+  chat, but a long enough conversation can still genuinely lose context.
+  Worth considering a context-length warning or auto-summarization trigger
+  in a future session if this recurs.
+
+---
+
 ## Session 2026-09-19 (part 14): Same write_file crash recurred with a different garbling pattern - fixed at the systemic level
 
 The exact "field required" write_file crash recurred, but this time the truncated
