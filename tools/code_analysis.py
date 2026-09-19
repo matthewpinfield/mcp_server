@@ -47,7 +47,14 @@ class AutoLinterSchema(BaseModel):
 class RepoExploreSchema(BaseModel):
     path: str = Field(description="Repository path", default=".")
     analysis_type: str = Field(
-        description="Analysis type: 'structure', 'files', 'git'", default="structure"
+        description=(
+            "Analysis type: 'structure' (directory/file-type counts only, no filenames), "
+            "'files' (language + large-file stats, no full filename list), "
+            "'git' (git info), or 'list' (the actual list of file paths/names - "
+            "use this one whenever you need to find a specific file by name, "
+            "e.g. a todo/readme/config file, rather than guessing the filename)"
+        ),
+        default="structure",
     )
 
 
@@ -465,8 +472,10 @@ class LangchainRepoExploreTool(AsyncTool):
                 return self._analyze_files(repo_path)
             elif analysis_type == "git":
                 return self._analyze_git_info(repo_path)
+            elif analysis_type == "list":
+                return self._list_files(repo_path)
             else:
-                return f"Unknown analysis type: {analysis_type}. Use 'structure', 'files', or 'git'"
+                return f"Unknown analysis type: {analysis_type}. Use 'structure', 'files', 'git', or 'list'"
 
         except Exception as e:
             logger.error(f"Repository Explorer error: {e}")
@@ -522,6 +531,37 @@ class LangchainRepoExploreTool(AsyncTool):
             for ext, count in sorted_types:
                 result += f"  {ext}: {count} files\n"
 
+        return result
+
+    def _list_files(self, repo_path: Path, max_files: int = 500) -> str:
+        """
+        Return actual relative file paths (like `find`/`ls -R`), not just
+        aggregate counts. 'structure' and 'files' only ever return
+        statistics - there was no way for the agent to see real filenames
+        to search for something like "the todo file" without guessing.
+        """
+        gitignore_patterns = _load_gitignore_patterns(repo_path)
+        paths = []
+        for root, dirs, files in os.walk(repo_path):
+            root_path = Path(root)
+            dirs[:] = [
+                d
+                for d in dirs
+                if not d.startswith(".")
+                and d not in ["node_modules", "__pycache__", "build", "dist", "venv"]
+            ]
+            for file in sorted(files):
+                file_path = root_path / file
+                if _is_ignored_by_gitignore(file_path, repo_path, gitignore_patterns):
+                    continue
+                paths.append(str(file_path.relative_to(repo_path)))
+
+        result = f"**File List**: {repo_path.name} ({len(paths)} files"
+        if len(paths) > max_files:
+            result += f", showing first {max_files}"
+        result += ")\n\n"
+        for p in sorted(paths)[:max_files]:
+            result += f"  {p}\n"
         return result
 
     def _analyze_files(self, repo_path: Path) -> str:
@@ -985,9 +1025,21 @@ class LangchainSystemFileReaderTool(AsyncTool):
             if not os.path.exists(file_path):
                 return f"File not found: {file_path}"
 
-            # Check if it's a directory
+            # Check if it's a directory - list its contents rather than just
+            # erroring, since the agent has no other tool that does a plain
+            # directory listing and would otherwise be stuck guessing.
             if os.path.isdir(file_path):
-                return f"Path is a directory, not a file: {file_path}"
+                try:
+                    entries = sorted(os.listdir(file_path))
+                except PermissionError:
+                    return f"Permission denied listing directory: {file_path}"
+                lines = [f"'{file_path}' is a directory, not a file. Its contents:\n"]
+                for entry in entries:
+                    full_entry = os.path.join(file_path, entry)
+                    lines.append(f"  {'📁' if os.path.isdir(full_entry) else '📄'} {entry}")
+                if not entries:
+                    lines.append("  (empty directory)")
+                return "\n".join(lines)
 
             # Get file info
             file_stat = os.stat(file_path)
