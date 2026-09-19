@@ -17,7 +17,7 @@ temperature = 0.8  # Higher temperature for thinking models
 
 MAX_WORKERS = 3
 REQUEST_TIMEOUT = 180
-LANGCHAIN_AGENT_TIMEOUT = 240
+LANGCHAIN_AGENT_TIMEOUT = 900  # raised from 240s to allow long autonomous multi-file build turns
 DIRECT_OLLAMA_TIMEOUT = 180
 
 
