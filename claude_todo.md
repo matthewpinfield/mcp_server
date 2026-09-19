@@ -4,6 +4,27 @@ NEVER MARK A ITEM AS COMPLETE TILL YOU HAVE TESTED IT FULLY AS PER CLAUDE.md tes
 
 ---
 
+## Session 2026-09-19 (part 8): Removed dead qwen3/gemma3 config left from consolidation
+
+Follow-up cleanup after consolidating everything onto gemma4:26b + nomic-embed-text.
+User confirmed the running system now only actually invokes those two models and
+asked to remove the remaining dead references.
+
+- [x] Removed `DEFAULT_LLM_MODEL = os.getenv("DEFAULT_LLM_MODEL", "qwen3:30b-a3b")`
+  and the also-unused `LLM_TIMEOUT` from `rag/dual_endpoint_server.py` - neither
+  was read anywhere else in that file.
+- [x] Deleted `model_switcher.py` entirely (`git rm`, recoverable from history if
+  ever needed) - its whole purpose was switching `DEFAULT_MODEL` between several
+  `qwen3` variants we no longer use, it referenced a `model_comparison_test.py`
+  that doesn't even exist anymore, and nothing else in the codebase imported it.
+- [x] **TESTED**: `pyflakes rag/dual_endpoint_server.py` clean; started the RAG
+  server after the edit and confirmed `/health` still reports both LanceDB
+  tables connected (5098 + 11663 docs). **PASS**
+- [x] Confirmed via `grep -rn "qwen3\|gemma3"` across all `.py` files: zero
+  remaining references anywhere in the live codebase.
+
+---
+
 ## Session 2026-09-19 (part 7): Found the real speed bottleneck - VRAM model-swap thrashing
 
 User asked whether it'd be faster to run everything on gemma4:26b, switch the

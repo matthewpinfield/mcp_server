@@ -19,9 +19,7 @@ DB_PATH = os.getenv("DB_PATH", "/opt/mcp/rag/")
 FLUTTER_TABLE = os.getenv("FLUTTER_TABLE", "flutter_dart_knowledge")
 MIXED_TABLE = os.getenv("MIXED_TABLE", "expert_py_flutter_dart_final")
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "nomic-embed-text:latest")
-DEFAULT_LLM_MODEL = os.getenv("DEFAULT_LLM_MODEL", "qwen3:30b-a3b")
 EMBEDDING_TIMEOUT = int(os.getenv("EMBEDDING_TIMEOUT", "30"))
-LLM_TIMEOUT = int(os.getenv("LLM_TIMEOUT", "30"))
 
 # Configure logging
 logging.basicConfig(
