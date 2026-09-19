@@ -4,6 +4,62 @@ NEVER MARK A ITEM AS COMPLETE TILL YOU HAVE TESTED IT FULLY AS PER CLAUDE.md tes
 
 ---
 
+## Session 2026-09-19 (part 2): Fixed "/code" file-access hallucination + wasteful tool-guessing
+
+User report via Continue in VS Code: asked the agent to read a file in
+`/home/matthewpinfield/iceMap`, agent claimed it could only see a `/code` folder
+and couldn't say where `/code` actually was. Also reported the agent feels slow,
+"as if it opens every tool before answering."
+
+### Root cause 1: hallucinated "/code" containerization story - FIXED
+- [x] Confirmed `read_system_file` genuinely works on any real host path with zero
+  issue — tested directly against `/home/matthewpinfield/iceMap/project_brief.md`,
+  read it fine. **No actual access restriction exists.**
+- [x] Found the real cause: `execute_code`'s tool description says it's an
+  "isolated Docker-based sandbox" and its own code (tools/sandbox.py) mounts
+  submitted code at `/code` inside that throwaway container. The system prompt in
+  `core/orchestrator.py` never explained this is unrelated to the other file
+  tools, so gemma4:26b — on hitting one failed/relative-path lookup — conflated
+  the two and confidently invented a false "I'm containerized, only /code is
+  mounted" narrative (visible verbatim in `~/.continue/sessions/*.json` history).
+  This is a pure LLM hallucination, not a real system limitation.
+  - [x] **FIXED**: added an explicit "two separate filesystems" clarification to
+    the system prompt distinguishing host-filesystem tools from the
+    sandbox-only `/code` mount.
+  - [x] **TESTED**: asked the agent to read the real iceMap file by absolute
+    path — read it correctly, no confusion. **PASS**
+
+### Root cause 2: agent burns many tool calls on an ambiguous file reference - FIXED
+- [x] Reproduced: asked "Can you read project_brief.md for me?" (no path). Agent
+  fired `explore_repository` → `read_system_file` (wrong dir) → `explore_repository`
+  (dup) → `explore_repository` (dup again) → `execute_code` → `git_status` →
+  `git_log` — 7 sequential tool calls (each its own LLM round-trip) before giving
+  up and asking for the path anyway. This is the literal mechanism behind "it
+  opens every tool before answering."
+  - [x] **FIXED**: added a system-prompt instruction to ask for the absolute path
+    immediately when a file/folder is named without one, instead of guessing
+    across tools.
+  - [x] **TESTED**: same exact prompt now goes straight to asking for the path,
+    zero tool calls. **PASS**
+
+### Performance investigation - NOT a tool-count problem, found a real contention source
+Measured directly (raw `ChatOllama`/Ollama API, no LangChain agent overhead):
+- Binding all 28 tools vs 0 tools: negligible difference once the model is warm
+  (~0.7-1.2s either way). **Ruled out** "too many tools" as the slowness cause.
+- Cold model load after Ollama's idle-unload: ~15s one-off cost. Expected, not a bug.
+- Same warm prompt repeated: latency varied 3.7s-12.4s call-to-call with identical
+  inputs. Ollama's own `eval_count`/`eval_duration` showed generation speed
+  swinging between ~160-190 tok/s (fast, GPU-bound, fine) with no obvious cause
+  visible from the MCP server side alone.
+- Likely contributor found: `summary_worker.py` runs a second model
+  (`gemma3:4b-it-qat`) on the **same GPU** immediately after every saved memory,
+  right after each chat turn finishes. Back-to-back user messages can land while
+  that summarization job is still running, contending for the one RTX 3090.
+- [ ] **NOT YET ACTIONED** — this is a design trade-off (debounce/delay
+  summarization vs. keep it immediate), needs a decision before changing it.
+
+---
+
 ## Session 2026-09-19: Verified 2026-04-14 fixes against actual purpose, found & fixed LLM caching gap ✅ COMPLETE
 
 Note: earlier in-between session work was mistakenly done against a stale copy at
