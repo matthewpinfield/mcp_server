@@ -4,6 +4,35 @@ NEVER MARK A ITEM AS COMPLETE TILL YOU HAVE TESTED IT FULLY AS PER CLAUDE.md tes
 
 ---
 
+## OPEN - NOT YET ACTIONED: 37 Dependabot vulnerabilities (3 critical, 15 high, 16 moderate, 3 low)
+
+User asked to hold off acting on this. Findings so far, for whoever picks it up:
+- All 37 are pip dependency CVEs (requirements.txt), not our own code.
+- **Free win found**: `chromadb==0.4.22` is listed in `requirements.txt` and
+  `rag/requirements.txt` but is NEVER imported anywhere in the codebase (grepped
+  all `.py` files, zero hits). It's dead weight - the memory system actually
+  uses LanceDB. Removing it clears 2 of the 37 alerts (1 critical + 1 high) for
+  free, no upgrade/regression risk.
+- Remaining packages needing version bumps (current pin -> needs at least):
+  anyio 4.9.0 -> 4.14.2 (1 critical, 1 medium) | idna 3.10 -> 3.15 (medium) |
+  langchain 0.2.0 -> 1.3.9 (2 medium, 1 high - MAJOR version jump, likely
+  breaking API changes given our orchestrator.py uses create_tool_calling_agent
+  etc.) | langchain-community 0.2.0 -> 0.3.27 (2 high, 1 low, 2 medium) |
+  langchain-core 0.2.0 -> 1.2.22 (1 critical, 3 high, 2 medium, 1 low - also a
+  MAJOR jump) | pyarrow 20.0.0 -> 23.0.1 (high) | pymongo 4.6.0 -> 4.6.3
+  (medium) | python-dotenv 1.1.0 -> 1.2.2 (medium) | requests 2.32.4 -> 2.33.0
+  (medium) | starlette 0.45.0 -> 1.3.1 (4 high, 2 medium - MAJOR jump) |
+  urllib3 2.4.0 -> 2.7.0 (4 high, 2 medium).
+- The langchain/langchain-core/starlette bumps are MAJOR version jumps (0.2.0
+  series is very old vs the 1.x/2.x series required for the fix) - these will
+  need actual regression testing against orchestrator.py/api/chat.py, not just
+  a version bump, since LangChain's API has changed significantly across major
+  versions. Do NOT bump-and-forget these.
+- The rest (anyio, idna, pyarrow, pymongo, python-dotenv, requests, urllib3)
+  look like safe/minor patch bumps.
+
+---
+
 ## Session 2026-09-19 (part 9): Project bloat audit and cleanup
 
 User asked for a broader sweep for redundant/bloat files beyond the model config
