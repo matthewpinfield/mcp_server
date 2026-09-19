@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field
 from bs4 import BeautifulSoup
 
 from .base import AsyncTool
-from config import DEFAULT_MODEL, OLLAMA_API_BASE
+from config import DEFAULT_MODEL, get_cached_llm
 
 logger = logging.getLogger(__name__)
 
@@ -73,9 +73,8 @@ class LangchainWebSearchTool(AsyncTool):
                 
             full_context = "\n\n".join(context_parts)
 
-            # Use same model as configured
-            from langchain_ollama import ChatOllama
-            llm = ChatOllama(model=DEFAULT_MODEL, base_url=OLLAMA_API_BASE)
+            # Use same cached model instance as the rest of the app
+            llm = get_cached_llm(DEFAULT_MODEL)
 
             extraction_prompt = f"""Extract only: {extract_info}
 
