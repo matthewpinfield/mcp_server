@@ -10,6 +10,7 @@ from .code_analysis import (
     LangchainCodeMetricsTool,
     LangchainDependencyAnalysisTool,
     LangchainRepoExploreTool,
+    LangchainSearchFileContentsTool,
     LangchainSystemFileReaderTool,
     LangchainWriteFileTool,
 )
@@ -80,6 +81,7 @@ __all__ = [
     "LangchainCodeMetricsTool",
     "LangchainSystemFileReaderTool",
     "LangchainWriteFileTool",
+    "LangchainSearchFileContentsTool",
     # Development Tools
     "LangchainBuildCommandTool",
     "LangchainPackageSearchTool",
@@ -118,6 +120,7 @@ SHARED_TOOLS = [
     # Code Analysis Tools
     LangchainAutoLinterTool(), LangchainRepoExploreTool(), LangchainDependencyAnalysisTool(),
     LangchainCodeMetricsTool(), LangchainSystemFileReaderTool(), LangchainWriteFileTool(),
+    LangchainSearchFileContentsTool(),
     # Development Tools
     LangchainBuildCommandTool(), LangchainPackageSearchTool(), LangchainDateTimeTool(),
     # Sandbox Tools
