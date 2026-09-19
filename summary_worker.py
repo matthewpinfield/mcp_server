@@ -11,6 +11,7 @@ import requests
 import time
 import re
 from tools.memory import get_redis_connection
+from config import DEFAULT_MODEL
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -27,11 +28,14 @@ class SummaryWorker:
             if "<think>" in assistant_response and "</think>" in assistant_response:
                 clean_response = re.sub(r'<think>.*?</think>', '', assistant_response, flags=re.DOTALL).strip()
             
-            # Direct Ollama API call to Gemma
+            # Direct Ollama API call - same model as main chat, thinking off
+            # (this is a background job, avoid triggering a VRAM model swap
+            # against whatever the main chat agent is using)
             payload = {
-                "model": "gemma3:4b-it-qat",
+                "model": DEFAULT_MODEL,
                 "prompt": f"Summarize in 50 words: User: {user_message[:200]} Assistant: {clean_response[:300]}",
-                "stream": False
+                "stream": False,
+                "think": False,
             }
             
             response = requests.post("http://localhost:11434/api/generate", 
