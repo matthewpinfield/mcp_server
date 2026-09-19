@@ -40,7 +40,6 @@ async def chat_proxy(request: Request):
         requested_model_name = request_body.get("model", DEFAULT_MODEL)
         messages = request_body.get("messages", [])
         stream = request_body.get("stream", True)
-       
 
         if not messages:
             raise HTTPException(status_code=400, detail="Messages cannot be empty")
@@ -164,7 +163,24 @@ async def chat_proxy(request: Request):
                 )
             else:
                 return JSONResponse(
-                    {"message": {"role": "assistant", "content": response_text}}
+                    {
+                        "id": "chatcmpl-command",
+                        "object": "chat.completion",
+                        "created": int(time.time()),
+                        "model": requested_model_name,
+                        "choices": [
+                            {
+                                "index": 0,
+                                "message": {"role": "assistant", "content": response_text},
+                                "finish_reason": "stop",
+                            }
+                        ],
+                        "usage": {
+                            "prompt_tokens": len(user_message) // 4,
+                            "completion_tokens": len(response_text) // 4,
+                            "total_tokens": (len(user_message) + len(response_text)) // 4,
+                        },
+                    }
                 )
 
         conversation_id = request.headers.get("X-Conversation-ID")
