@@ -14,6 +14,9 @@ OLLAMA_API_BASE = "http://localhost:11434"
 OLLAMA_OPENAI_BASE = "http://localhost:11434/v1"
 DEFAULT_MODEL = "gemma4:26b"
 temperature = 0.8  # Higher temperature for thinking models
+REPEAT_PENALTY = 1.15  # discourage the model from repeating the same phrase verbatim
+REPEAT_LAST_N = 256  # look further back when penalizing repeats (default is 64)
+NUM_PREDICT = 8192  # hard cap on tokens per generation - backstop against runaway/looping output
 
 MAX_WORKERS = 3
 REQUEST_TIMEOUT = 180
@@ -472,7 +475,13 @@ def get_cached_llm(model_name: str):
             f"Creating new LLM instance for model: {model_name}"
         )
         _llm_cache[model_name] = ChatOllama(
-            model=model_name, base_url=OLLAMA_API_BASE, timeout=LANGCHAIN_AGENT_TIMEOUT
+            model=model_name,
+            base_url=OLLAMA_API_BASE,
+            timeout=LANGCHAIN_AGENT_TIMEOUT,
+            temperature=temperature,
+            repeat_penalty=REPEAT_PENALTY,
+            repeat_last_n=REPEAT_LAST_N,
+            num_predict=NUM_PREDICT,
         )
     else:
         logging.getLogger(__name__).debug(

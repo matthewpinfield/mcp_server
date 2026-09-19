@@ -4,6 +4,62 @@ NEVER MARK A ITEM AS COMPLETE TILL YOU HAVE TESTED IT FULLY AS PER CLAUDE.md tes
 
 ---
 
+## Session 2026-09-19 (part 12): Fixed "narrates but never acts" and a real repetition death-loop
+
+User reported the agent kept saying "I am proceeding now" / "I am executing these
+writes now" then just sitting there, and separately pasted a real transcript of a
+much worse case: the model repeating "I'll check src/api/schemas.py." verbatim
+six times in a row, never calling a tool, in what the user correctly called a
+"death loop."
+
+### Investigation
+- [x] Confirmed via two clean synthetic tests (3-file and 6-file multi-step
+  builds through the real `orchestrate_request`) that the model does NOT
+  reliably fail this way on short/simple tasks - it only surfaces under real,
+  longer/messier project conditions. Pure prompting (the "autopilot" fix from
+  last session) clearly isn't 100% reliable against it, so a code-level
+  safeguard was needed, not just more instruction text.
+- [x] Found `config.py`'s `get_cached_llm()` set ZERO sampling parameters -
+  not even the `temperature` constant already defined there was ever wired
+  in. No `repeat_penalty`/`repeat_last_n`/`num_predict` at all, meaning
+  Ollama's bare defaults were controlling generation, with no hard cap on a
+  single generation's length.
+
+### Fixes
+- [x] Wired `temperature`, and added `REPEAT_PENALTY=1.15`,
+  `REPEAT_LAST_N=256`, and `NUM_PREDICT=8192` (hard per-generation token cap)
+  into `get_cached_llm()` in `config.py` - a preventive measure, reduces the
+  odds of this happening at all. **TESTED**: `get_cached_llm` still returns
+  correct responses after the change.
+- [x] **The real guarantee**: added `_has_repetition_loop()` to
+  `core/orchestrator.py` - detects the same sentence/line repeated 3+ times
+  verbatim - checked incrementally DURING streaming (on each sentence/line
+  boundary, not just at the end), so a loop gets cut off immediately instead
+  of running to completion. **TESTED against the user's actual pasted
+  transcript**: correctly detected the loop at line 47/53, i.e. after the
+  3rd repeat - well before it actually ran to 6 repeats in the live session.
+- [x] Added `NARRATION_STALL_PATTERN` (module-level, was previously
+  recompiled per-request) - broadened from a fixed phrase list to a
+  grammatical pattern (`I will/I'm/I am [now/first] [going to] VERB`) after
+  testing showed the phrase-list version missed real reported examples like
+  "I am proceeding now" and "I will try to read...". Verified against all of
+  the user's actual reported phrases plus negative examples (past-tense
+  "successfully created" text correctly does NOT match).
+- [x] Restructured the agent execution loop in `orchestrate_request` into
+  `_run_agent_turn()` + a retry wrapper: after each turn, if no tool was
+  actually invoked AND the text matches the narration/stall pattern (which a
+  cut-off repetition loop always will, being full of "I'll check X"), it
+  automatically nudges the model ("you said you would do that but didn't
+  call the tool - call it now") and retries, up to 2 times (only when
+  autopilot is on). If it still hasn't called a tool after that, it now
+  tells the user plainly instead of silently going quiet.
+- [x] **TESTED end-to-end** through the live running server (not just
+  direct function calls): re-ran the 3-file project-build test after all
+  these changes - completed correctly in 7.2s, no false-positive nudges
+  triggered, no interference with normal working behavior.
+
+---
+
 ## Session 2026-09-19 (part 11): Added /autopilot on/off toggle
 
 User asked for explicit control over the "keep going until done" autonomous

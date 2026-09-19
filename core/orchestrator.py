@@ -6,6 +6,7 @@ Single agent with all tools, uses existing memory tools for context.
 """
 
 import logging
+import re
 import uuid
 from typing import Dict, List, Optional, AsyncGenerator
 
@@ -46,6 +47,40 @@ def set_autopilot(enabled: bool) -> None:
     from tools.memory import get_redis_connection
 
     get_redis_connection().set(_AUTOPILOT_REDIS_KEY, "true" if enabled else "false")
+
+
+# Words/phrases that indicate the model is narrating an action it intends to
+# take, rather than reporting one it already took via a real tool call. If a
+# turn ends with this kind of text and NO tool was actually invoked, the
+# agent has stalled - it announced work and stopped, leaving the user
+# waiting. This is a known failure mode of tool-calling models under long
+# context: they sometimes describe the next step instead of emitting the
+# structured tool call for it.
+NARRATION_STALL_PATTERN = re.compile(
+    r"\bI(?:'ll|'m| will| am)\s+(?:now\s+|first\s+|just\s+|also\s+)?"
+    r"(?:going to\s+)?"
+    r"(check(?:ing)?|read(?:ing)?|writ(?:e|ing)|creat(?:e|ing)|"
+    r"execut(?:e|ing)|run(?:ning)?|call(?:ing)?|us(?:e|ing)|"
+    r"try(?:ing)?|attempt(?:ing)?|proceed(?:ing)?|start(?:ing)?|"
+    r"look(?:ing)?|verify(?:ing)?|explor(?:e|ing)|build(?:ing)?|"
+    r"implement(?:ing)?|continue|now)\b"
+    r"|\blet me now\b|<call:",
+    re.IGNORECASE,
+)
+
+
+def _has_repetition_loop(text: str, min_repeats: int = 3) -> bool:
+    """
+    Detect a degenerate repetition loop: the model repeating essentially the
+    same sentence/line verbatim several times in a row instead of acting.
+    Checked periodically while streaming so a runaway loop can be cut off
+    immediately instead of running to completion.
+    """
+    parts = [p.strip() for p in re.split(r"[\n.]+", text) if len(p.strip()) > 15]
+    if len(parts) < min_repeats:
+        return False
+    last = parts[-1]
+    return all(p == last for p in parts[-min_repeats:])
 
 
 # Model name Continue is configured to use for its Edit/Apply roles (see
@@ -219,22 +254,77 @@ User Rules:
         early_stopping_method="force",
     )
 
-    # Execute with streaming
-    full_response = ""
-    error_occurred = False
-    
-    try:
+    async def _run_agent_turn(agent_input: str, history):
+        """Run one AgentExecutor turn, streaming content chunks and reporting
+        whether any tool was actually invoked."""
+        text = ""
+        tool_called = False
         async for event in agent_executor.astream_events(
-            {"input": user_message, "chat_history": chat_history}, 
-            version="v2"
+            {"input": agent_input, "chat_history": history},
+            version="v2",
         ):
             kind = event["event"]
-            if kind == "on_chat_model_stream":
+            if kind == "on_tool_start":
+                tool_called = True
+            elif kind == "on_chat_model_stream":
                 chunk = event["data"]["chunk"]
-                # Only stream content if this is NOT a tool call
                 if chunk.content and not getattr(chunk, "tool_calls", None):
-                    full_response += chunk.content
-                    yield chunk.content
+                    text += chunk.content
+                    yield ("content", chunk.content)
+                    # Only worth checking once a sentence/line boundary just
+                    # completed - cheap early-out, avoids re-splitting on
+                    # every tiny token chunk.
+                    if any(c in chunk.content for c in ".\n") and _has_repetition_loop(text):
+                        logger.info("Detected mid-stream repetition loop - aborting this generation early")
+                        break
+        yield ("done", (text, tool_called))
+
+    # Execute with streaming, auto-nudging up to twice if the model narrates
+    # an action without actually calling the tool for it (only relevant when
+    # autopilot is on - with it off, pausing after a step is intended).
+    full_response = ""
+    error_occurred = False
+    max_nudges = 2 if autopilot_on else 0
+
+    try:
+        current_input = user_message
+        current_history = list(chat_history)
+        stalled = False
+        for attempt in range(max_nudges + 1):
+            attempt_text = ""
+            tool_called = False
+            async for kind, payload in _run_agent_turn(current_input, current_history):
+                if kind == "content":
+                    full_response += payload
+                    attempt_text += payload
+                    yield payload
+                else:
+                    attempt_text, tool_called = payload
+
+            if tool_called:
+                break
+            if not NARRATION_STALL_PATTERN.search(attempt_text):
+                break
+            if attempt == max_nudges:
+                stalled = True
+                break
+
+            # Stalled: it described an action but never called the tool for
+            # it. Nudge it to actually do what it just said, in the same turn.
+            logger.info("Detected narration without a tool call - nudging agent to actually act")
+            current_history = current_history + [
+                ("human", current_input),
+                ("assistant", attempt_text),
+            ]
+            current_input = (
+                "You just said you would do that, but you did not actually call the "
+                "necessary tool. Call it now, immediately - do not explain again."
+            )
+
+        if stalled:
+            note = "\n\n*(I described that step but didn't actually execute it after a couple of attempts - say \"continue\" and I'll try again.)*"
+            full_response += note
+            yield note
     except Exception as e:
         logger.error(f"Agent execution stream error: {e}")
         error_message = f"An error occurred during execution: {e}"
