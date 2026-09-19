@@ -13,6 +13,7 @@ This module contains all code analysis tools as per mcp_engineering_plan.md:
 import json
 import logging
 import os
+import re
 import subprocess
 from pathlib import Path
 from typing import List, Optional, Type
@@ -1113,6 +1114,11 @@ class WriteFileSchema(BaseModel):
     create_dirs: bool = Field(default=True, description="Create parent directories if they don't exist")
 
 
+_MISPLACED_FILE_PATH_PATTERN = re.compile(
+    r'\s*"{0,3}\s*,?\s*file_path\s*=\s*[\'"]([^\'"]+)[\'"]\s*$'
+)
+
+
 class LangchainWriteFileTool(AsyncTool):
     name: str = "write_file"
     description: str = (
@@ -1122,7 +1128,43 @@ class LangchainWriteFileTool(AsyncTool):
     )
     args_schema: Type[BaseModel] = WriteFileSchema
 
-    def _run(self, file_path: str, content: str, create_dirs: bool = True) -> str:
+    def _parse_input(self, tool_input, tool_call_id):
+        # Recover a misplaced file_path BEFORE LangChain's own Pydantic
+        # validation runs, so the recovered value survives LangChain's
+        # arg-filtering step (it only forwards keys present in the raw
+        # tool_input dict, so injecting the fix later - e.g. via a Pydantic
+        # validator - gets silently dropped). Keeping file_path required in
+        # WriteFileSchema (not defaulted) means the LLM-facing tool schema
+        # still correctly marks it required.
+        if isinstance(tool_input, dict) and not tool_input.get("file_path") and isinstance(tool_input.get("content"), str):
+            match = _MISPLACED_FILE_PATH_PATTERN.search(tool_input["content"])
+            if match:
+                tool_input = dict(tool_input)
+                tool_input["file_path"] = match.group(1)
+                tool_input["content"] = tool_input["content"][: match.start()]
+                logger.warning(f"write_file call was missing file_path - recovered '{tool_input['file_path']}' from content before validation")
+        return super()._parse_input(tool_input, tool_call_id)
+
+    def _run(self, content: str, file_path: str = "", create_dirs: bool = True) -> str:
+        # For very large file writes, the model sometimes garbles its own
+        # tool call: file_path ends up appended as trailing text inside the
+        # content string instead of as its own argument (a stray closing
+        # triple-quote followed by file_path="/some/path"). LangChain's own
+        # arg parsing only forwards keys that were present in the raw model
+        # output, so a schema-level fix can't inject a missing file_path -
+        # recover it here instead, where content is always available.
+        if not file_path:
+            match = _MISPLACED_FILE_PATH_PATTERN.search(content)
+            if match:
+                file_path = match.group(1)
+                content = content[: match.start()]
+                logger.warning(f"write_file call was missing file_path - recovered '{file_path}' from content")
+            else:
+                return (
+                    "Error: write_file was called without a file_path, and none could be "
+                    "recovered from the content. Please retry with an explicit file_path."
+                )
+
         logger.info(f"Write File: Attempting to write to '{file_path}'")
 
         try:
