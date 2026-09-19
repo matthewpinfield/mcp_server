@@ -18,7 +18,7 @@ import subprocess
 from pathlib import Path
 from typing import List, Optional, Type
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from .base import AsyncTool
 
@@ -1164,6 +1164,21 @@ class WriteFileSchema(BaseModel):
     file_path: str = Field(description="Full path to the file to write")
     content: str = Field(description="Content to write to the file")
     create_dirs: bool = Field(default=True, description="Create parent directories if they don't exist")
+
+    @field_validator("content", mode="before")
+    @classmethod
+    def _stringify_json_content(cls, value: object) -> object:
+        """
+        For JSON-shaped files (package.json, tsconfig.json, etc.) the model
+        often passes `content` as a native JSON object/dict instead of a
+        string - reasonable given the tool call itself is JSON, but it
+        fails our str-typed field every time with the same error, and the
+        model keeps repeating the identical mistake rather than correcting
+        it. Auto-stringify rather than reject.
+        """
+        if isinstance(value, (dict, list)):
+            return json.dumps(value, indent=2)
+        return value
 
 
 _MISPLACED_FILE_PATH_PATTERN = re.compile(
