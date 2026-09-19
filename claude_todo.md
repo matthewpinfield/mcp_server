@@ -4,6 +4,55 @@ NEVER MARK A ITEM AS COMPLETE TILL YOU HAVE TESTED IT FULLY AS PER CLAUDE.md tes
 
 ---
 
+## Session 2026-09-19 (part 5): Continue's inline Edit/Apply were broken - added a direct-completion path
+
+User asked whether the agent produces code directly in the VS Code window "as if
+running a cloud LLM" (i.e. Continue's inline Edit / Apply-to-file features).
+
+### Diagnosis
+- [x] Traced the routes: `/v1/chat/completions` (api/chat.py:215) just delegates
+  to the same `chat_proxy` as `/api/chat`. Every request - whether it came from
+  Continue's `chat`, `edit`, or `apply` role - went through the identical path:
+  only the LAST `user` message's text was extracted (any `system` message
+  Continue sends, which for edit/apply carries its own "output ONLY the code"
+  instructions, was silently discarded), then the FULL 28-tool agent ran with
+  our own chat-assistant system prompt.
+- [x] Confirmed this would break Edit/Apply: Continue expects clean replacement
+  code it can drop straight into the file as a diff. Our old pipeline would
+  instead return chatty markdown, tool-call narration, etc. - not usable as an
+  inline diff.
+
+### Fix
+- [x] Added `direct_completion()` to `core/orchestrator.py` - a lightweight
+  passthrough with NO tools, NO memory, NO system-prompt override. It converts
+  the raw `messages` array (preserving whatever `system` message Continue sent)
+  straight into langchain messages and streams the model's raw output back.
+- [x] Added branching in `api/chat.py`'s `chat_proxy`: requests where
+  `model == "gemma4-direct-edit"` (constant `DIRECT_COMPLETION_MODEL`) skip
+  straight to `direct_completion()`, both streaming and non-streaming, before
+  the code that strips down to just the last user message.
+- [x] Split Continue's model config so `chat` uses the original agent-backed
+  model and `edit`/`apply` use the new direct-completion model name, in both:
+  - `~/.continue/config.yaml` (the global config actually used for the iceMap
+    session) - backed up before editing.
+  - `.continue/models/new-model.yaml` in this repo - this file's YAML was
+    ALSO broken (bad indentation, would fail to parse - fixed that too while
+    applying the same split) for whenever this project itself is opened in
+    Continue.
+- [x] **TESTED** against the running server (real HTTP calls, not just import
+  checks):
+  - Non-streaming: sent a realistic Continue-edit-shaped request (system
+    prompt = "respond with ONLY the final code", user = code + instruction to
+    rename a function and add a docstring). Got back exactly
+    `def sum_two(a, b):\n    """..."""\n    return a + b` - clean code, no
+    chat chatter, no tool-call text. Server log confirmed NO "Agent has 28
+    tools" line and NO "Memory saved" line for this request - direct path
+    genuinely bypassed the agent. **PASS**
+  - Streaming: same request with `stream: true` - correct SSE chunks, 0.89s
+    to first token, clean final content. **PASS**
+
+---
+
 ## Session 2026-09-19 (part 4): Removed dead Google Search fallback from tools/web.py
 
 User confirmed Google search was intentionally dropped for cost reasons and asked

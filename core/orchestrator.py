@@ -23,6 +23,45 @@ from tools.memory import get_memory_system
 
 logger = logging.getLogger(__name__)
 
+# Model name Continue is configured to use for its Edit/Apply roles (see
+# ~/.continue/config.yaml). Requests with this model name bypass the tool
+# agent entirely - Continue's Edit/Apply features need clean code output
+# honoring THEIR OWN system prompt, not our chat-assistant one.
+DIRECT_COMPLETION_MODEL = "gemma4-direct-edit"
+
+
+async def direct_completion(messages: List[Dict]) -> AsyncGenerator[str, None]:
+    """
+    Lightweight passthrough for Continue's Edit/Apply roles: no tools, no
+    memory, no system-prompt override. Honors whatever system/user messages
+    Continue sends exactly as given, and streams raw model output back
+    untouched so Continue can apply it as a clean inline diff.
+    """
+    from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+
+    lc_messages = []
+    for msg in messages:
+        role = msg.get("role")
+        content = msg.get("content", "")
+        if isinstance(content, list):
+            content = " ".join(
+                c.get("text", "") for c in content if isinstance(c, dict) and c.get("type") == "text"
+            )
+        elif not isinstance(content, str):
+            content = str(content)
+
+        if role == "system":
+            lc_messages.append(SystemMessage(content=content))
+        elif role == "assistant":
+            lc_messages.append(AIMessage(content=content))
+        else:
+            lc_messages.append(HumanMessage(content=content))
+
+    llm = get_cached_llm(DEFAULT_MODEL)
+    async for chunk in llm.astream(lc_messages):
+        if chunk.content:
+            yield chunk.content
+
 
 async def orchestrate_request(
     messages: List[Dict],

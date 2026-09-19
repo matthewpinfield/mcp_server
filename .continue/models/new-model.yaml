@@ -9,13 +9,21 @@ models:
     roles:
       - chat
       - edit
-      
- - provider: openai
-   model: gemma4:26b
-   apiBase: http://localhost:8013/v1
-   apiKey: dummy-key
-   name: MCP Gemma4 (Memory + RAG + Tools)
-   roles:
+
+  - provider: openai
+    model: gemma4:26b
+    apiBase: http://localhost:8013/v1
+    apiKey: dummy-key
+    name: MCP Gemma4 (Memory + RAG + Tools)
+    roles:
       - chat
+
+  - provider: openai
+    model: gemma4-direct-edit
+    apiBase: http://localhost:8013/v1
+    apiKey: dummy-key
+    name: MCP Gemma4 (Edit/Apply)
+    roles:
       - edit
+      - apply
 
