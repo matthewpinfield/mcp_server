@@ -4,6 +4,57 @@ NEVER MARK A ITEM AS COMPLETE TILL YOU HAVE TESTED IT FULLY AS PER CLAUDE.md tes
 
 ---
 
+## Session 2026-09-19 (part 9): Project bloat audit and cleanup
+
+User asked for a broader sweep for redundant/bloat files beyond the model config
+cleanup. Audited the whole top-level directory.
+
+- [x] Deleted unambiguous junk (all confirmed before deleting, not guessed):
+  - `=0.4.0` - a literal file created by an unquoted `pip install "pkg>=0.4.0"`
+    where the shell treated `>=0.4.0` as a redirect. Contained raw pip output.
+  - `scratch.py` - a one-off manual DuckDuckGo-scraping prototype, fully
+    superseded by the real, tested implementation in `tools/web.py`.
+  - `mcp_debug.log` (1MB) and `server_test_new.log` (128KB) - stray untracked
+    log files sitting in the repo root (already covered by `.gitignore`'s
+    `*.log`, just needed deleting from disk).
+- [x] Deleted 3 stale docs, each verified against current code before removal
+  (not assumed stale from dates alone):
+  - `LLM_Router_Performance_Research_2025.md` - documented a two-LLM-call
+    "router" pattern (`analyze_tool_needs`/`get_tool_recommendations`).
+    Grepped `core/orchestrator.py` - confirmed that pattern no longer exists,
+    it's a single unified agent now.
+  - `memory_context_benchmark_results.md` - all benchmarks were against
+    `qwen3:14b`, which has zero references left anywhere in the codebase
+    after the earlier gemma4 consolidation cleanup.
+  - `coding_protocol.md` - untouched since 2025-07-06 (14+ months stale) and
+    actively contradicted the current `CLAUDE.md`: it mandated pausing for
+    explicit confirmation at every single step, while current rules run in
+    Auto Mode. Kept alongside CLAUDE.md it risked a future session following
+    the wrong protocol.
+- [x] **Found and fixed a real functional bug while auditing config, not just
+  redundancy**: `pyproject.toml` had a `[tool.flake8]` section, but flake8
+  does not read `pyproject.toml` natively - the separate `.flake8` file
+  (which only had `exclude = .venv`) was the actual config in effect. This
+  meant flake8 had been silently running with its built-in default
+  max-line-length of 79, not the intended 88 (matching black's config),
+  this whole time. Moved the real settings (max-line-length=88,
+  extend-ignore=E203, full exclude list) into `.flake8` and removed the dead
+  section from `pyproject.toml`.
+  - [x] **TESTED**: `flake8 --help` now reports `Default: 88` (was
+    previously flake8's built-in 79); ran `flake8 config.py` and got 2 real
+    E501 violations at the correct 88-char threshold. **PASS**
+- Kept (verified legitimate, not bloat): `test_web.py` (a real functional
+  test for the web search tool, same category as `test_memory.py` etc.),
+  `pubspec.yaml`/`.lock` (supports the Dart `analyzer`-based code analysis
+  tooling, unrelated to the removed Flutter/pubspec files from the OTHER
+  Superceeded_MCP_Server directory).
+- Noted but not actioned (low priority, not true bloat): `README.md`,
+  `User_Guide.md`, and `CLAUDE.md` all independently repeat the same
+  server-startup commands - not broken, just three places that could drift
+  out of sync if one is updated without the others.
+
+---
+
 ## Session 2026-09-19 (part 8): Removed dead qwen3/gemma3 config left from consolidation
 
 Follow-up cleanup after consolidating everything onto gemma4:26b + nomic-embed-text.
