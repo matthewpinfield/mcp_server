@@ -4,6 +4,45 @@ NEVER MARK A ITEM AS COMPLETE TILL YOU HAVE TESTED IT FULLY AS PER CLAUDE.md tes
 
 ---
 
+## Session 2026-09-19 (part 11): Added /autopilot on/off toggle
+
+User asked for explicit control over the "keep going until done" autonomous
+behavior added last session, rather than it always being on.
+
+- [x] Added `/autopilot on` / `/autopilot off` / `/autopilot` (status) as a new
+  slash command in `core/orchestrator.py`, following the same pattern as the
+  existing `/rule` family - routed directly, no LLM call.
+- [x] State persisted in Redis (`settings:autopilot_enabled`), same store the
+  memory system already uses, so it survives across requests and server
+  restarts.
+- [x] System prompt now conditionally includes either the "keep going through
+  every batch" instruction (autopilot ON) or a "finish one batch then stop
+  and let the user confirm" instruction (autopilot OFF), instead of always
+  including the autonomous instruction unconditionally.
+- [x] **Default is ON** - deliberately, not OFF - because the user had just
+  confirmed the always-on autonomous behavior from the previous fix "was
+  doing very well"; defaulting the new toggle to OFF would have silently
+  regressed that. `/autopilot off` is the explicit escape hatch for careful
+  step-by-step work.
+- [x] **TESTED**: toggled on/off/status via `orchestrate_request` directly -
+  correct responses and Redis state each time. Verified through the live
+  running server too via a real HTTP call to `/api/chat`.
+- [x] **Found and fixed a real bug while testing**: the non-streaming
+  slash-command response in `api/chat.py` returned `{"message": {...}}`,
+  missing the standard OpenAI `choices`/`id`/`object` wrapper every other
+  response path uses - would break any client expecting a normal
+  `response.choices[0].message.content` shape. Fixed to match the standard
+  format used elsewhere in the file.
+
+### Still open: temporary diagnostic logging for workspace-awareness question
+Added (then reverted from this commit, still sitting uncommitted in the
+working tree) a temporary diagnostic log in `api/chat.py` dumping request
+body keys + headers, to check whether Continue sends any workspace/folder
+field by default. Waiting on the user to send a live test message so the log
+can be inspected - remove or convert to a real fix before committing.
+
+---
+
 ## Session 2026-09-19 (part 10): Agent stopped after one batch instead of running autonomously
 
 User asked the agent to "proceed until the project is complete" (Claude-Code/Cursor-Composer

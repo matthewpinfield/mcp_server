@@ -23,6 +23,31 @@ from tools.memory import get_memory_system
 
 logger = logging.getLogger(__name__)
 
+# --- Autopilot toggle: controls whether the agent keeps working through a
+# whole multi-step task unprompted, or stops after each step/batch to check
+# in. On by default (matches the verified-working autonomous behavior).
+# Persisted in Redis so it survives across requests and server restarts,
+# same store used by the memory system.
+_AUTOPILOT_REDIS_KEY = "settings:autopilot_enabled"
+
+
+def is_autopilot_enabled() -> bool:
+    try:
+        from tools.memory import get_redis_connection
+
+        value = get_redis_connection().get(_AUTOPILOT_REDIS_KEY)
+        return value != "false"  # unset (None) or "true" both mean ON
+    except Exception as e:
+        logger.error(f"Failed to read autopilot setting: {e}")
+        return True
+
+
+def set_autopilot(enabled: bool) -> None:
+    from tools.memory import get_redis_connection
+
+    get_redis_connection().set(_AUTOPILOT_REDIS_KEY, "true" if enabled else "false")
+
+
 # Model name Continue is configured to use for its Edit/Apply roles (see
 # ~/.continue/config.yaml). Requests with this model name bypass the tool
 # agent entirely - Continue's Edit/Apply features need clean code output
@@ -87,6 +112,21 @@ async def orchestrate_request(
             yield process_rules_slash_command(command, args)
             return
 
+        # Autopilot toggle: controls whether the agent runs a whole
+        # multi-step task unprompted, or stops after each step to check in.
+        if command == "/autopilot":
+            arg = args.strip().lower()
+            if arg == "on":
+                set_autopilot(True)
+                yield "Autopilot is now **ON**. I'll keep working through a multi-step task (e.g. building a new project) without stopping to check in, until it's done or I hit a real blocker."
+            elif arg == "off":
+                set_autopilot(False)
+                yield "Autopilot is now **OFF**. I'll pause and check in with you between steps/batches on multi-step tasks."
+            else:
+                state = "ON" if is_autopilot_enabled() else "OFF"
+                yield f"Autopilot is currently **{state}**. Use `/autopilot on` or `/autopilot off` to change it."
+            return
+
         # Unknown command
         yield f"Unknown command '{command}'. Use tools instead of slash commands."
         return
@@ -103,6 +143,14 @@ async def orchestrate_request(
 
     # Debug: Log available tools
     logger.info(f"Agent has {len(tools)} tools: {[t.name for t in tools]}")
+
+    autopilot_on = is_autopilot_enabled()
+    if autopilot_on:
+        autopilot_prompt = """### IMPORTANT: autopilot is ON for multi-step tasks (e.g. building a new project from scratch):
+If the user asks you to proceed until a task/project is complete, or to keep going without stopping to check in, treat that as standing confirmation to write ALL the new files in your plan, not just the first one. Do not announce a plan ("I will start with Batch 1...") and then end your turn - actually call write_file for every file in that batch, then immediately continue to the next batch and do the same, in the SAME turn, without pausing to ask permission again. Only stop early if you hit a real blocker: a tool error you cannot resolve, or a genuine decision only the user can make (e.g. which of two conflicting approaches to take). A batch boundary or having announced what you're about to do is NOT a reason to stop - stop only when the whole task is actually finished or you are genuinely blocked."""
+    else:
+        autopilot_prompt = """### IMPORTANT: autopilot is OFF for multi-step tasks:
+On a multi-step task (e.g. building a new project from scratch), plan out the batches, complete ONE batch (calling write_file for the files in it), then stop and summarize what you did and what's next, letting the user confirm before you continue to the next batch. The user can turn autopilot on with `/autopilot on` if they want you to run through the whole plan unprompted instead."""
 
     # Simple system prompt with conditional memory context
     system_prompt = f"""
@@ -125,8 +173,7 @@ If the user names a file or folder WITHOUT giving a full absolute path (e.g. "re
 When the user asks you to write or change code in an EXISTING file, do NOT call write_file. Instead, reply with the code as a normal markdown code block in chat. The user will review it and click "Apply" in their editor (Continue IDE), which shows them a real inline diff to accept or reject before anything touches disk - this is the same model Cursor uses for Cmd+K and chat-apply. Calling write_file skips that review entirely and silently overwrites the file, which is what we are trying to avoid.
 Only use write_file when the user explicitly asks you to create/save a brand-new file directly (not edit an existing one) AND has clearly confirmed they want it written immediately without reviewing a diff first.
 
-### IMPORTANT: autonomous multi-step tasks (e.g. building a new project from scratch):
-If the user asks you to proceed until a task/project is complete, or to keep going without stopping to check in, treat that as standing confirmation to write ALL the new files in your plan, not just the first one. Do not announce a plan ("I will start with Batch 1...") and then end your turn - actually call write_file for every file in that batch, then immediately continue to the next batch and do the same, in the SAME turn, without pausing to ask permission again. Only stop early if you hit a real blocker: a tool error you cannot resolve, or a genuine decision only the user can make (e.g. which of two conflicting approaches to take). A batch boundary or having announced what you're about to do is NOT a reason to stop - stop only when the whole task is actually finished or you are genuinely blocked.
+{autopilot_prompt}
 
 User Rules:
 {user_rules}
