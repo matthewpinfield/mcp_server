@@ -279,12 +279,15 @@ User Rules:
                         break
         yield ("done", (text, tool_called))
 
-    # Execute with streaming, auto-nudging up to twice if the model narrates
-    # an action without actually calling the tool for it (only relevant when
-    # autopilot is on - with it off, pausing after a step is intended).
+    # Execute with streaming, auto-nudging if the model stalls: either it
+    # narrates an action without actually calling the tool for it (only
+    # nudged when autopilot is on - with it off, pausing after a step is
+    # intended), or it returns a genuinely empty response with no text and
+    # no tool call (always nudged, regardless of autopilot - a blank
+    # response is never a valid answer to anything).
     full_response = ""
     error_occurred = False
-    max_nudges = 2 if autopilot_on else 0
+    max_nudges = 2
 
     try:
         current_input = user_message
@@ -302,27 +305,47 @@ User Rules:
                     attempt_text, tool_called = payload
 
             if tool_called:
+                if not attempt_text.strip():
+                    # Tool(s) ran (real work happened - files written,
+                    # commands run, etc.) but the agent produced no closing
+                    # summary text. Don't re-invoke - retrying here risks
+                    # duplicate side effects (re-writing the same file,
+                    # re-running a git command). Just tell the user
+                    # something happened instead of showing nothing.
+                    logger.info("Tool call succeeded but produced no summary text - adding a fallback note")
+                    note = "\n\n*(That action completed, though I didn't generate a closing summary.)*"
+                    full_response += note
+                    yield note
                 break
-            if not NARRATION_STALL_PATTERN.search(attempt_text):
+            is_empty = not attempt_text.strip()
+            is_narration_stall = bool(NARRATION_STALL_PATTERN.search(attempt_text))
+            if not is_empty and not (autopilot_on and is_narration_stall):
                 break
             if attempt == max_nudges:
                 stalled = True
                 break
 
-            # Stalled: it described an action but never called the tool for
-            # it. Nudge it to actually do what it just said, in the same turn.
-            logger.info("Detected narration without a tool call - nudging agent to actually act")
+            # Stalled: either a blank response, or it described an action
+            # without actually calling the tool for it. Nudge it to actually
+            # respond/act, in the same turn.
+            logger.info(
+                "Detected %s - nudging agent to actually respond/act",
+                "an empty response" if is_empty else "narration without a tool call",
+            )
             current_history = current_history + [
                 ("human", current_input),
-                ("assistant", attempt_text),
+                ("assistant", attempt_text if attempt_text.strip() else "(no response)"),
             ]
             current_input = (
-                "You just said you would do that, but you did not actually call the "
+                "You gave an empty response - answer the request directly, or call "
+                "the necessary tool now."
+                if is_empty
+                else "You just said you would do that, but you did not actually call the "
                 "necessary tool. Call it now, immediately - do not explain again."
             )
 
         if stalled:
-            note = "\n\n*(I described that step but didn't actually execute it after a couple of attempts - say \"continue\" and I'll try again.)*"
+            note = "\n\n*(I wasn't able to give a real response to that after a couple of attempts - say \"continue\" and I'll try again.)*"
             full_response += note
             yield note
     except Exception as e:
