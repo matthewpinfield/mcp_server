@@ -1102,3 +1102,51 @@ class LangchainSystemFileReaderTool(AsyncTool):
         result += f"**Content:**\n```\n{content}\n```"
 
         return result
+
+
+# ===== FILE WRITING TOOL =====
+
+
+class WriteFileSchema(BaseModel):
+    file_path: str = Field(description="Full path to the file to write")
+    content: str = Field(description="Content to write to the file")
+    create_dirs: bool = Field(default=True, description="Create parent directories if they don't exist")
+
+
+class LangchainWriteFileTool(AsyncTool):
+    name: str = "write_file"
+    description: str = (
+        "Write content to a file on the system. IMPORTANT: This modifies files! "
+        "Always inform the user what file you're writing and ask for permission before using this tool. "
+        "Can create new files or overwrite existing ones. Creates parent directories if needed."
+    )
+    args_schema: Type[BaseModel] = WriteFileSchema
+
+    def _run(self, file_path: str, content: str, create_dirs: bool = True) -> str:
+        logger.info(f"Write File: Attempting to write to '{file_path}'")
+
+        try:
+            # Expand user path
+            file_path = os.path.expanduser(file_path)
+
+            # Create parent directories if needed
+            if create_dirs:
+                parent_dir = os.path.dirname(file_path)
+                if parent_dir and not os.path.exists(parent_dir):
+                    os.makedirs(parent_dir, exist_ok=True)
+                    logger.info(f"Created directory: {parent_dir}")
+
+            # Write the file
+            with open(file_path, 'w', encoding='utf-8') as f:
+                f.write(content)
+
+            file_size = os.path.getsize(file_path)
+            logger.info(f"Successfully wrote {file_size} bytes to {file_path}")
+
+            return f"✅ Successfully wrote {file_size} bytes to: {file_path}"
+
+        except PermissionError:
+            return f"❌ Permission denied writing to: {file_path}"
+        except Exception as e:
+            logger.error(f"Write File error: {e}")
+            return f"❌ Error writing to {file_path}: {str(e)}"
