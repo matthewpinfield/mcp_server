@@ -4,6 +4,41 @@ NEVER MARK A ITEM AS COMPLETE TILL YOU HAVE TESTED IT FULLY AS PER CLAUDE.md tes
 
 ---
 
+## Session 2026-09-19 (part 16): Fixed hallucinated filename - no tool could list actual filenames
+
+User pasted a transcript: asked the agent to find "the todo list" in iceMap, it
+tried `explore_repository`, got only aggregate summaries back, then hallucinated
+a specific filename (`claude_todo.md` - amusingly, THIS project's own todo file
+name) instead of just listing what's actually there.
+
+- [x] Confirmed by reading the code: neither `analysis_type='structure'` nor
+  `'files'` in `explore_repository` ever return actual filenames - both only
+  ever accumulate aggregate counts (files-per-extension, directory counts,
+  language stats). There was no tool anywhere in the 28-tool set that does
+  a plain "list what's in this directory" (the equivalent of `ls`/`find`).
+  This wasn't a one-off bug, it was a genuine missing capability that would
+  cause this exact hallucination pattern for any "find file X" request.
+- [x] **FIXED** two places:
+  - Added `analysis_type='list'` to `explore_repository` (`tools/code_analysis.py`)
+    - returns real relative file paths (respecting `.gitignore`, reusing the
+    existing filtering helper), not just counts. Updated the schema
+    description to explicitly tell the model to use `list` (not guess) when
+    looking for a specific file by name.
+  - `read_system_file` called on a directory used to just return "Path is a
+    directory, not a file" and stop there. Now it lists the directory's
+    immediate contents instead, since that's almost always what's actually
+    useful when this happens.
+- [x] **TESTED**: both fixes correctly reveal the real file is `todo.md` (not
+  the hallucinated `claude_todo.md`). Ran the exact reported scenario through
+  the live agent ("what is the exact filename of the todo list... do not
+  guess") - it correctly called `explore_repository` with `analysis_type='list'`
+  on the first try and answered correctly with zero hallucination.
+- [x] **Regression-tested**: `structure` and `files` modes still return their
+  original output unchanged, normal file reads still work, the "unknown
+  analysis_type" error message correctly lists all 4 options now.
+
+---
+
 ## Session 2026-09-19 (part 15): Fixed "No response generated" ("well its dead now")
 
 User's live session started returning "No response generated" repeatedly after
