@@ -4,6 +4,27 @@ NEVER MARK A ITEM AS COMPLETE TILL YOU HAVE TESTED IT FULLY AS PER CLAUDE.md tes
 
 ---
 
+## Session 2026-09-19 (part 4): Removed dead Google Search fallback from tools/web.py
+
+User confirmed Google search was intentionally dropped for cost reasons and asked
+to remove the now-useless Google branch since it was just adding a wasted round-trip
+before falling back to DuckDuckGo on every single search.
+
+- [x] Removed `GOOGLE_API_KEY`/`GOOGLE_SEARCH_ENGINE_ID` env lookups and the whole
+  Google Custom Search API branch from `_get_search_results()` in `tools/web.py`.
+  DuckDuckGo Lite scraping is now the only path - no behavior change, just removes
+  the always-failing 403 round-trip.
+  - Also removed a redundant local `from bs4 import BeautifulSoup` (already
+    imported at module level) and the now-unused `import os`.
+- [x] **TESTED**: re-ran the "2026 FIFA World Cup host" query after the change -
+  still correctly returns Canada/Mexico/USA with the FIFA.com source, 3.74s,
+  `pyflakes tools/web.py` clean. **PASS**
+- Leftover `.env` `GOOGLE_API_KEY`/`GOOGLE_SEARCH_ENGINE_ID` values are now fully
+  unused dead config - safe to delete from `.env` whenever convenient, not
+  referenced by any code anymore.
+
+---
+
 ## Session 2026-09-19 (part 3): Confirmed web search - DuckDuckGo, working, and not costing Google API money
 
 User asked whether search_web still uses DuckDuckGo and whether it gets useable

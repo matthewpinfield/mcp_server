@@ -7,7 +7,6 @@ Provides web search that returns URLs for the agent to choose from,
 plus targeted scraping of agent-selected URLs.
 """
 
-import os
 import logging
 import requests
 from typing import Dict, List, Optional, Type
@@ -18,13 +17,6 @@ from .base import AsyncTool
 from config import DEFAULT_MODEL, get_cached_llm
 
 logger = logging.getLogger(__name__)
-
-# Google Custom Search API configuration
-GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
-GOOGLE_SEARCH_ENGINE_ID = os.getenv("GOOGLE_SEARCH_ENGINE_ID")
-
-if not GOOGLE_API_KEY or not GOOGLE_SEARCH_ENGINE_ID:
-    logger.error("Google API key or Search Engine ID not found in environment variables.")
 
 
 class WebSearchSchema(BaseModel):
@@ -146,43 +138,9 @@ Output format: Provide a clear answer using the context. If the exact answer isn
             return f"Search error: {str(e)}"
 
     def _get_search_results(self, query: str, max_results: int) -> List[Dict]:
-        """Get search results from DuckDuckGo (fallback) or Google"""
+        """Get search results via direct scraping of DuckDuckGo Lite"""
         results = []
         try:
-            if GOOGLE_API_KEY:
-                logger.debug("Attempting Google Custom Search API")
-                url = "https://www.googleapis.com/customsearch/v1"
-                params = {
-                    "key": GOOGLE_API_KEY,
-                    "cx": GOOGLE_SEARCH_ENGINE_ID,
-                    "q": query,
-                    "num": min(max_results, 10),
-                    "safe": "medium",
-                }
-
-                response = requests.get(url, params=params, timeout=15)
-                # If Google succeeds, use its results
-                if response.status_code == 200:
-                    data = response.json()
-                    items = data.get("items", [])
-                    for item in items:
-                        results.append({
-                            "title": item.get("title", ""),
-                            "body": item.get("snippet", ""),
-                            "href": item.get("link", ""),
-                        })
-                    logger.info(f"Found {len(results)} search results for '{query}' via Google")
-                    return results
-                else:
-                    logger.warning(f"Google Search failed with status {response.status_code}, falling back to DuckDuckGo")
-            
-        except Exception as e:
-            logger.warning(f"Google Custom Search encountered error: {e}, falling back to DuckDuckGo")
-            
-        # Fallback to robust direct scraping of DuckDuckGo Lite
-        try:
-            from bs4 import BeautifulSoup
-            
             url = "https://lite.duckduckgo.com/lite/"
             headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36"}
             response = requests.post(url, data={"q": query}, headers=headers, timeout=10)
