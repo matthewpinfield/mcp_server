@@ -4,6 +4,35 @@ NEVER MARK A ITEM AS COMPLETE TILL YOU HAVE TESTED IT FULLY AS PER CLAUDE.md tes
 
 ---
 
+## Session 2026-09-19 (part 3): Confirmed web search - DuckDuckGo, working, and not costing Google API money
+
+User asked whether search_web still uses DuckDuckGo and whether it gets useable
+answers, after confirming the switch away from Google was deliberate (cost).
+
+- [x] Confirmed `.env` still has a `GOOGLE_API_KEY`/`GOOGLE_SEARCH_ENGINE_ID`, and
+  `tools/web.py` still tries Google first on every search - but verified directly
+  against Google's API that the key returns **403 PERMISSION_DENIED** ("project
+  does not have access to Custom Search JSON API"). This fails instantly with no
+  billable search performed, so **it is not costing money**, it just silently
+  falls through to DuckDuckGo Lite scraping every time (one wasted fast round-trip
+  per search, not worth removing given it's a harmless no-op).
+- [x] Ran real functional tests against `LangchainWebSearchTool` (not just "does it
+  return something" - checked the actual answers were correct):
+  - "2026 FIFA World Cup host" -> correctly returned USA/Mexico/Canada, June 11 -
+    July 19 2026, sourced from Wikipedia. **PASS**
+  - "latest stable Python version" -> correctly returned 3.14.7, sourced from
+    python.org/downloads/latest. **PASS**
+  - DuckDuckGo Lite fallback scraping is genuinely working and returning accurate,
+    current, sourced answers.
+- [x] **Found & fixed the same dead-caching bug as core/orchestrator.py**:
+  `LangchainWebSearchTool._run()` was creating its own `ChatOllama(...)` instance
+  directly instead of calling `get_cached_llm()`, bypassing the LLM instance
+  cache on every single web search. Fixed to use `get_cached_llm(DEFAULT_MODEL)`.
+  **TESTED**: re-ran the Python-version query after the fix, still correct, log
+  confirms the cached-instance code path is used.
+
+---
+
 ## Session 2026-09-19 (part 2): Fixed "/code" file-access hallucination + wasteful tool-guessing
 
 User report via Continue in VS Code: asked the agent to read a file in
