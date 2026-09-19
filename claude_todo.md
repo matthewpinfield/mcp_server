@@ -4,6 +4,63 @@ NEVER MARK A ITEM AS COMPLETE TILL YOU HAVE TESTED IT FULLY AS PER CLAUDE.md tes
 
 ---
 
+## Session 2026-09-19 (part 7): Found the real speed bottleneck - VRAM model-swap thrashing
+
+User asked whether it'd be faster to run everything on gemma4:26b, switch the
+memory-summarizer to a new small gemma4:e2b variant, or keep gemma3:4b-it-qat,
+on their RTX 3090 Ti.
+
+### Investigation (measured on real hardware, not assumed)
+- [x] Websearched to confirm gemma4:26b is actually a Mixture-of-Experts model
+  with only ~4B ACTIVE params per token (26B-A4B) - similar order of magnitude
+  to the old 4B summarizer per-token, not 6x heavier as the "26B" label implies.
+  Source: https://huggingface.co/google/gemma-4-26B-A4B
+- [x] Found gemma4:26b defaults to "thinking" mode ON when the `think` param is
+  omitted - generates a full hidden reasoning block (measured 600-1300+ tokens)
+  that our agent discards entirely (only `chunk.content` is read), roughly
+  doubling response time for zero visible benefit. `think: false` fixes this
+  per-call.
+- [x] **Found the actual dominant bottleneck**: only ~3.96GB VRAM is free with
+  gemma4:26b (18GB) resident on the 24GB card - not enough to also hold
+  gemma3:4b-it-qat (4GB) at the same time. Ollama was silently EVICTING one
+  model to load the other on every switch. Measured directly via Ollama's own
+  `load_duration`: swapping gemma3 in cost ~3.9s, swapping gemma4:26b back in
+  cost **8.3s** - and because every chat turn triggers a memory save ->
+  gemma3 summarization -> next chat turn needing gemma4 again, this swap
+  round-trip (~12s of pure dead reload time) was happening on EVERY turn.
+  This is what the user was feeling as "slow and inconsistent", not tool
+  count, not thinking mode alone, not raw compute contention.
+- [x] Checked whether gemma4:e2b could coexist instead of full consolidation:
+  websearched actual Ollama-distributed tag sizes (not just the raw spec-sheet
+  numbers) - default `gemma4:e2b` is 7.2GB (Q4_K_M, too big), only
+  `gemma4:e2b-it-qat` at 3.3GB comes close, and even that leaves <1GB spare
+  for KV cache growth - fragile, not worth the download given a guaranteed
+  zero-risk alternative exists.
+
+### Fix
+- [x] User decided: consolidate onto gemma4:26b for everything, thinking off
+  for the background summarization task. Updated `summary_worker.py`:
+  - Replaced hardcoded `"gemma3:4b-it-qat"` with `DEFAULT_MODEL` (from
+    config.py, currently `gemma4:26b`) - same model as main chat, no more
+    swap-triggering model switch.
+  - Added `"think": False` to the `/api/generate` payload for the
+    summarization call.
+- [x] **Bonus fix found along the way**: `main.py` spawned `summary_worker.py`
+  via `subprocess.Popen` with no handle kept and no shutdown cleanup - every
+  time the dev server was restarted during this session, the OLD
+  summary_worker.py process was orphaned (7 stray copies accumulated and were
+  found running, silently polluting benchmark results). Fixed: the process
+  handle is now captured and `.terminate()`'d in the FastAPI lifespan shutdown
+  block. **TESTED**: started main.py, sent SIGTERM, confirmed via `ps aux`
+  that BOTH main.py and its summary_worker.py child fully exited. **PASS**
+- [x] **TESTED the actual fix** against the live server: sent a chat message,
+  waited for the summary worker to process the save (confirmed via log:
+  "Processing summary" / "Summary updated"), then sent a second chat message -
+  took 5.69s, statistically identical to the first turn's 5.70s. No swap
+  penalty. **PASS**
+
+---
+
 ## Session 2026-09-19 (part 6): Standardized on one Cursor-style diff-first workflow
 
 User was confused why there were 3 different ways to get code written (chat-only,

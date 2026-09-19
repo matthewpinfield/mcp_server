@@ -160,21 +160,16 @@ async def lifespan(app: FastAPI):
     
     # Start background summary worker
     import subprocess
-    import threading
     import os
-    
-    def start_summary_worker():
-        try:
-            subprocess.Popen([
-                sys.executable, "summary_worker.py"
-            ], cwd=os.getcwd())
-            print("INFO:     Summary worker started automatically")
-        except Exception as e:
-            print(f"WARN:     Failed to start summary worker: {e}")
-    
-    # Start worker in background thread
-    worker_thread = threading.Thread(target=start_summary_worker, daemon=True)
-    worker_thread.start()
+
+    summary_worker_process = None
+    try:
+        summary_worker_process = subprocess.Popen(
+            [sys.executable, "summary_worker.py"], cwd=os.getcwd()
+        )
+        print("INFO:     Summary worker started automatically")
+    except Exception as e:
+        print(f"WARN:     Failed to start summary worker: {e}")
 
     # Check memory system with proper inventory
     try:
@@ -249,6 +244,12 @@ async def lifespan(app: FastAPI):
     logger.info("Shutting down MCP Server...")
     if scheduler:
         scheduler.shutdown()
+    if summary_worker_process:
+        summary_worker_process.terminate()
+        try:
+            summary_worker_process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            summary_worker_process.kill()
     executor.shutdown(wait=True)
 
 
