@@ -59,27 +59,15 @@ async def chat_proxy(request: Request):
         if not user_message:
             raise HTTPException(status_code=400, detail="No user message found")
 
-        # ZERO Continue injection - replace all messages with clean single message
-        original_msg_count = len(messages)
-        messages = [{"role": "user", "content": user_message}]
-        
-        # Clean Continue sessions to prevent future contamination
-        try:
-            import os
-            sessions_path = "/home/matthewpinfield/.continue/sessions"
-            if os.path.exists(sessions_path):
-                for f in os.listdir(sessions_path):
-                    if f.endswith(".json"):
-                        os.remove(os.path.join(sessions_path, f))
-        except: pass
-        
         logger.info(
-            f"Chat Request: Model='{requested_model_name}', Msgs={original_msg_count}→{len(messages)} (filtered)"
+            f"Chat Request: Model='{requested_model_name}', Msgs={len(messages)}"
         )
 
         if user_message.strip().startswith("/"):
             # Route slash commands through orchestrator for proper routing
-            response_text = await orchestrate_request(messages, user_message, requested_model_name)
+            response_text = ""
+            async for chunk in orchestrate_request(messages, user_message, requested_model_name):
+                response_text += chunk
 
             if stream:
 
@@ -122,32 +110,31 @@ async def chat_proxy(request: Request):
                 )
 
         conversation_id = request.headers.get("X-Conversation-ID")
-        agent_response = await orchestrate_request(
-            messages, user_message, requested_model_name, conversation_id
-        )
-
-        formatted_response = format_response_for_continue(agent_response)
 
         if stream:
             async def agent_stream():
-                # Send the entire formatted response in a single chunk
-                # This preserves all markdown formatting, including newlines and code blocks
-                stream_chunk = {
-                    "id": "chatcmpl-agent",
-                    "object": "chat.completion.chunk",
-                    "created": int(time.time()),
-                    "model": requested_model_name,
-                    "choices": [
-                        {
-                            "index": 0,
-                            "delta": {"content": formatted_response},
-                            "finish_reason": None,
-                        }
-                    ],
-                }
-                yield f"data: {json.dumps(stream_chunk)}\n\n"
+                async for chunk in orchestrate_request(
+                    messages, user_message, requested_model_name, conversation_id
+                ):
+                    formatted_chunk = format_response_for_continue(chunk)
+                    if not formatted_chunk:
+                        continue
+                        
+                    stream_chunk = {
+                        "id": "chatcmpl-agent",
+                        "object": "chat.completion.chunk",
+                        "created": int(time.time()),
+                        "model": requested_model_name,
+                        "choices": [
+                            {
+                                "index": 0,
+                                "delta": {"content": formatted_chunk},
+                                "finish_reason": None,
+                            }
+                        ],
+                    }
+                    yield f"data: {json.dumps(stream_chunk)}\n\n"
 
-                # Send the final chunk indicating the end of the stream
                 final_chunk = {
                     "id": "chatcmpl-agent",
                     "object": "chat.completion.chunk",
@@ -156,8 +143,6 @@ async def chat_proxy(request: Request):
                     "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
                 }
                 yield f"data: {json.dumps(final_chunk)}\n\n"
-
-                # Standard OpenAI-compatible SSE termination
                 yield "data: [DONE]\n\n"
 
             return StreamingResponse(
@@ -166,30 +151,37 @@ async def chat_proxy(request: Request):
                 headers={"Content-Type": "text/event-stream"},
             )
         else:
-                return JSONResponse(
-                    {
-                        "id": "chatcmpl-agent",
-                        "object": "chat.completion",
-                        "created": int(time.time()),
-                        "model": requested_model_name,
-                        "choices": [
-                            {
-                                "index": 0,
-                                "message": {
-                                    "role": "assistant",
-                                    "content": formatted_response,
-                                },
-                                "finish_reason": "stop",
-                            }
-                        ],
-                        "usage": {
-                            "prompt_tokens": len(user_message) // 4,
-                            "completion_tokens": len(agent_response) // 4,
-                            "total_tokens": (len(user_message) + len(agent_response))
-                            // 4,
-                        },
-                    }
-                )
+            agent_response = ""
+            async for chunk in orchestrate_request(
+                messages, user_message, requested_model_name, conversation_id
+            ):
+                agent_response += chunk
+
+            formatted_response = format_response_for_continue(agent_response)
+            
+            return JSONResponse(
+                {
+                    "id": "chatcmpl-agent",
+                    "object": "chat.completion",
+                    "created": int(time.time()),
+                    "model": requested_model_name,
+                    "choices": [
+                        {
+                            "index": 0,
+                            "message": {
+                                "role": "assistant",
+                                "content": formatted_response,
+                            },
+                            "finish_reason": "stop",
+                        }
+                    ],
+                    "usage": {
+                        "prompt_tokens": len(user_message) // 4,
+                        "completion_tokens": len(agent_response) // 4,
+                        "total_tokens": (len(user_message) + len(agent_response)) // 4,
+                    },
+                }
+            )
 
        
 

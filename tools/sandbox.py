@@ -121,9 +121,10 @@ LANGUAGE_CONFIG = {
 
 
 class SandboxExecuteSchema(BaseModel):
-    tool_input: str = Field(
-        description='JSON string containing: {"code": "code to execute", "language": "python|javascript|typescript|java|cpp|c|go|rust|php|ruby|dart|flutter", "timeout": 30, "stdin_input": ""}'
-    )
+    code: str = Field(description="Code to execute")
+    language: str = Field(default="python", description="Programming language: python, javascript, typescript, java, cpp, c, go, rust, php, ruby, dart, flutter")
+    timeout: int = Field(default=30, description="Execution timeout in seconds (max 120)")
+    stdin_input: str = Field(default="", description="Standard input to provide to the code")
 
 
 class SandboxStatsSchema(BaseModel):
@@ -318,38 +319,13 @@ class MultiLanguageSandboxTool(AsyncTool):
     )
     args_schema: Type[BaseModel] = SandboxExecuteSchema
 
-    def _run(self, tool_input: str) -> str:
-        # Parse the JSON input string (LangChain ReAct agent compatible)
-        try:
-            import json
-
-            if isinstance(tool_input, str) and tool_input.startswith("{"):
-                # Try to parse as JSON
-                parsed = json.loads(tool_input)
-                code = parsed.get("code", "")
-                language = parsed.get("language", "python")
-                timeout = parsed.get("timeout", None)
-                stdin_input = parsed.get("stdin_input", "")
-            else:
-                # Plain text - treat as code with default language Python
-                code = tool_input
-                language = "python"
-                timeout = None
-                stdin_input = ""
-
-        except json.JSONDecodeError:
-            # If JSON parsing fails, treat as plain code with default language
-            code = tool_input
-            language = "python"
-            timeout = None
-            stdin_input = ""
-
+    def _run(self, code: str, language: str = "python", timeout: int = 30, stdin_input: str = "") -> str:
         logger.info(
             f"Multi-Language Sandbox: executing {len(code)} chars of {language} code"
         )
 
-        # Use language-specific timeout or default
-        if timeout is None:
+        # Use language-specific timeout or default if not specified
+        if timeout == 30:  # Default value, try to get language-specific
             timeout = LANGUAGE_CONFIG.get(language, {}).get("timeout", 30)
 
         try:

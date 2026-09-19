@@ -289,10 +289,10 @@ class LangchainMemorySearchTool(AsyncTool):
         "Use get_full_memory to retrieve complete conversations."
     )
     args_schema: Type[BaseModel] = SearchMemorySchema
-    
+
     def _run(self, query: str, limit: int = 5) -> str:
-        return asyncio.run(self._arun(query, limit))
-    
+        raise NotImplementedError("Use async version _arun instead")
+
     async def _arun(self, query: str, limit: int = 5) -> str:
         try:
             memory_system = get_memory_system()
@@ -411,10 +411,10 @@ class LangchainSaveAgentNoteTool(AsyncTool):
     name: str = "save_agent_note"
     description: str = "Save your own notes, analysis, conclusions, and insights for future reference"
     args_schema: Type[BaseModel] = SaveAgentNoteSchema
-    
+
     def _run(self, note: str) -> str:
-        return asyncio.run(self._arun(note))
-    
+        raise NotImplementedError("Use async version _arun instead")
+
     async def _arun(self, note: str) -> str:
         try:
             memory_system = get_memory_system()
@@ -457,10 +457,10 @@ class LangchainSearchAgentNotesTool(AsyncTool):
     name: str = "search_agent_notes"
     description: str = "Search your previously saved notes, analysis, and insights"
     args_schema: Type[BaseModel] = SearchAgentNotesSchema
-    
+
     def _run(self, query: str, limit: int = 5) -> str:
-        return asyncio.run(self._arun(query, limit))
-    
+        raise NotImplementedError("Use async version _arun instead")
+
     async def _arun(self, query: str, limit: int = 5) -> str:
         try:
             memory_system = get_memory_system()
