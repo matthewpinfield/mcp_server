@@ -1244,3 +1244,103 @@ class LangchainWriteFileTool(AsyncTool):
         except Exception as e:
             logger.error(f"Write File error: {e}")
             return f"❌ Error writing to {file_path}: {str(e)}"
+
+
+# ===== CONTENT SEARCH (GREP) TOOL =====
+
+
+class SearchFileContentsSchema(BaseModel):
+    pattern: str = Field(description="Text or regex pattern to search for")
+    path: str = Field(description="Directory or file to search in", default=".")
+    file_glob: str = Field(
+        default="*",
+        description="Only search files matching this glob, e.g. '*.py' or '*.md'. Default '*' searches all text files.",
+    )
+    case_sensitive: bool = Field(default=False, description="Whether the search is case-sensitive")
+    is_regex: bool = Field(default=False, description="Treat pattern as a regular expression instead of literal text")
+    max_results: int = Field(default=100, description="Maximum number of matching lines to return")
+
+
+class LangchainSearchFileContentsTool(AsyncTool):
+    name: str = "search_file_contents"
+    description: str = (
+        "Search file CONTENTS for a text pattern across a directory (like grep/ripgrep) - "
+        "finds which files mention something and at what line. "
+        "Use this whenever you need to find code/text by what it says, not by filename - "
+        "explore_repository only lists filenames, it does not search inside files."
+    )
+    args_schema: Type[BaseModel] = SearchFileContentsSchema
+
+    def _run(
+        self,
+        pattern: str,
+        path: str = ".",
+        file_glob: str = "*",
+        case_sensitive: bool = False,
+        is_regex: bool = False,
+        max_results: int = 100,
+    ) -> str:
+        logger.info(f"Search File Contents: pattern={pattern!r} path={path!r} glob={file_glob!r}")
+
+        try:
+            search_path = Path(path).resolve()
+            if not search_path.exists():
+                return f"Path does not exist: {path}"
+
+            flags = 0 if case_sensitive else re.IGNORECASE
+            try:
+                compiled = re.compile(pattern if is_regex else re.escape(pattern), flags)
+            except re.error as e:
+                return f"Invalid regex pattern: {e}"
+
+            if search_path.is_file():
+                candidates = [search_path]
+                base_dir = search_path.parent
+            else:
+                base_dir = search_path
+                gitignore_patterns = _load_gitignore_patterns(search_path)
+                candidates = []
+                for root, dirs, files in os.walk(search_path):
+                    root_path = Path(root)
+                    dirs[:] = [
+                        d
+                        for d in dirs
+                        if not d.startswith(".")
+                        and d not in ["node_modules", "__pycache__", "build", "dist", "venv", ".venv"]
+                    ]
+                    for file in files:
+                        file_path = root_path / file
+                        if not file_path.match(file_glob):
+                            continue
+                        if _is_ignored_by_gitignore(file_path, search_path, gitignore_patterns):
+                            continue
+                        candidates.append(file_path)
+
+            matches = []
+            files_searched = 0
+            for file_path in sorted(candidates):
+                try:
+                    with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
+                        files_searched += 1
+                        for line_num, line in enumerate(f, start=1):
+                            if compiled.search(line):
+                                rel = file_path.relative_to(base_dir) if file_path.is_relative_to(base_dir) else file_path
+                                matches.append(f"{rel}:{line_num}: {line.strip()}")
+                                if len(matches) >= max_results:
+                                    break
+                except (UnicodeDecodeError, PermissionError, OSError):
+                    continue
+                if len(matches) >= max_results:
+                    break
+
+            if not matches:
+                return f"No matches for '{pattern}' in {files_searched} files searched under {path}"
+
+            header = f"Found {len(matches)} match(es) for '{pattern}' ({files_searched} files searched)"
+            if len(matches) >= max_results:
+                header += f" - stopped at max_results={max_results}"
+            return header + ":\n\n" + "\n".join(matches)
+
+        except Exception as e:
+            logger.error(f"Search File Contents error: {e}")
+            return f"Search error: {str(e)}"

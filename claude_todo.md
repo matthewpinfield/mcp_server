@@ -4,6 +4,38 @@ NEVER MARK A ITEM AS COMPLETE TILL YOU HAVE TESTED IT FULLY AS PER CLAUDE.md tes
 
 ---
 
+## Session 2026-09-19 (part 17): Added real grep/content-search - agent had no way to search inside files
+
+User reported the agent said it "could not grep". Verified this was true, not a
+hallucination: grepped all tool class names across `tools/*.py` - every existing
+"search" tool searches something else entirely (GitHub repos, DuckDuckGo, the
+pre-built Flutter/Python RAG vector DB, npm/PyPI packages, conversation memory,
+agent's own notes). None of the 29 tools searched the CONTENTS of the user's
+actual project files - `explore_repository` only ever listed filenames (even
+after this session's earlier `list` mode fix), and `execute_code` is sandboxed
+away from the real filesystem so `grep` via the sandbox wouldn't reach real files
+either.
+
+- [x] Added a new tool, `search_file_contents` (`tools/code_analysis.py`) -
+  genuine grep-style search: literal or regex pattern, optional file glob
+  filter (e.g. `*.py`), case sensitivity toggle, respects `.gitignore` via
+  the existing filter helper, returns `file:line: content` matches capped
+  at `max_results`. Registered in `tools/all_tools.py` (imports, `__all__`,
+  `SHARED_TOOLS`) - now 29 tools total.
+- [x] **TESTED** directly against real files (not synthetic data): literal
+  search across this whole project found 19 genuine `DEFAULT_MODEL`
+  references with correct file:line output; case-insensitive search found
+  uppercase "TODO" when searching lowercase "todo"; regex search correctly
+  returned zero matches for a pattern verified (via a separate `grep`) to
+  genuinely not exist in the target file; invalid regex handled gracefully
+  with a clear error instead of crashing.
+- [x] **TESTED end-to-end through the live agent**: asked it to search file
+  contents (not filenames) for "Sentinel" in the iceMap project - it picked
+  `search_file_contents` immediately (no hesitation, no wrong-tool attempt)
+  and correctly found genuine matches across 13 real files.
+
+---
+
 ## Session 2026-09-19 (part 16): Fixed hallucinated filename - no tool could list actual filenames
 
 User pasted a transcript: asked the agent to find "the todo list" in iceMap, it
