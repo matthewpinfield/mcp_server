@@ -4,6 +4,26 @@ NEVER MARK A ITEM AS COMPLETE TILL YOU HAVE TESTED IT FULLY AS PER CLAUDE.md tes
 
 ---
 
+## Session 2026-09-19 (part 18): Fixed Continue "Could not resolve filepath to apply changes"
+
+User hit this error every time they clicked "Apply" on a code block. Traced to
+the Cursor-style diff-first system prompt added earlier this session: it told
+the agent to reply with a plain markdown code block (` ```python `) but never
+told it to include the file path in the fence's info string. Continue's own
+system prompt (seen earlier this session, in its Agent Mode instructions)
+explicitly requires this format to resolve which file Apply targets - without
+it, Continue has nothing to go on and fails with exactly this error.
+
+- [x] **FIXED**: updated the diff-first instruction in `core/orchestrator.py`
+  to require the exact format Continue needs: ` ```python /path/to/file.py `
+  (language, space, the real file path) instead of just ` ```python `.
+- [x] **TESTED**: asked the agent to add a function to a real existing file -
+  response now correctly opens with
+  ` ```python /tmp/.../scratchpad/calc.py ` followed by the updated code,
+  matching Continue's expected convention exactly.
+
+---
+
 ## Session 2026-09-19 (part 17): Added real grep/content-search - agent had no way to search inside files
 
 User reported the agent said it "could not grep". Verified this was true, not a
