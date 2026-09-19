@@ -30,8 +30,6 @@ DEBUG_VERBOSE = False
 LOG_LEVEL = logging.DEBUG if DEBUG_VERBOSE else logging.INFO
 
 # API Keys
-GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
-GOOGLE_SEARCH_ENGINE_ID = os.getenv("GOOGLE_SEARCH_ENGINE_ID")
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
 
 # --- RAG Keywords Configuration ---
