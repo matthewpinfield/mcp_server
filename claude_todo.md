@@ -4,6 +4,56 @@ NEVER MARK A ITEM AS COMPLETE TILL YOU HAVE TESTED IT FULLY AS PER CLAUDE.md tes
 
 ---
 
+## Session 2026-09-19 (part 13): Fixed write_file crash on large files (regression + a real deeper bug)
+
+User hit: `1 validation error for WriteFileSchema file_path Field required` while
+the agent was mid-build, with `content` visibly truncated mid-string.
+
+### Two distinct causes found
+- [x] **Regression I introduced last session**: `NUM_PREDICT=8192` (added as a
+  backstop against runaway generation) was actively harmful - confirmed via
+  direct testing that the model emits `content` BEFORE `file_path` in the
+  `write_file` tool-call JSON. Any generation long enough to exceed the token
+  cap gets cut off mid-`content`, and `file_path` (ordered after it) never
+  gets emitted at all. **FIXED**: removed `NUM_PREDICT` entirely from
+  `config.py`/`get_cached_llm()` - the mid-stream repetition-loop detector
+  added earlier this session is the correct, semantically-aware defense
+  against runaway generation and doesn't have this truncation risk.
+- [x] **A separate, deeper bug**: even with no token cap, reproduced with a
+  genuinely large file request (a 15,500-character file) that the model
+  garbles its OWN JSON for very long `content` values - `file_path` ends up
+  appended as trailing text INSIDE the content string instead of as its own
+  JSON key, e.g. content ending in `...main()\n""" , file_path="/tmp/x.py"`.
+- [x] First attempted fix (a Pydantic `model_validator(mode="before")` on
+  `WriteFileSchema`) did NOT work - traced into LangChain's own
+  `BaseTool._parse_input()` (site-packages) and found it validates through
+  the schema (which DOES recover file_path correctly) but then filters the
+  result to only keys present in the ORIGINAL raw tool_input dict, silently
+  dropping any key the validator added that wasn't there originally.
+- [x] **Real fix**: overrode `_parse_input()` on `LangchainWriteFileTool`
+  itself to recover a misplaced `file_path` from the raw dict BEFORE
+  LangChain's validation runs (so the recovered key IS in the dict LangChain
+  filters against). Kept `file_path` as a required field in `WriteFileSchema`
+  (not defaulted) so the LLM-facing tool schema still correctly advertises it
+  as required. `_run()` also got its own defensive fallback for direct/bypass
+  invocations that skip `_parse_input`.
+- [x] **TESTED** all three cases through the REAL `tool.run()` invocation
+  path (not just direct schema instantiation, which had misleadingly passed
+  before the LangChain filtering issue was found):
+  - Garbled call (file_path missing, present in content) -> recovers
+    correctly, file written, content verified as valid Python via `compile()`.
+  - Normal well-formed call -> still works unchanged.
+  - Genuinely unrecoverable call (no path anywhere) -> still raises a clear
+    Pydantic validation error rather than silently succeeding with garbage.
+  - Confirmed via `tool.args_schema.model_json_schema()` that `file_path` is
+    still listed as `required` for the LLM.
+- [x] Also fixed a regex bug found while testing: the initial recovery
+  pattern's "junk before file_path" character class included `)`, which
+  ate the legitimate closing paren off `main()` in the recovered content.
+  Tightened to only strip quote/comma/whitespace characters.
+
+---
+
 ## Session 2026-09-19 (part 12): Fixed "narrates but never acts" and a real repetition death-loop
 
 User reported the agent kept saying "I am proceeding now" / "I am executing these

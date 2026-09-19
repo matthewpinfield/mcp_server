@@ -16,7 +16,12 @@ DEFAULT_MODEL = "gemma4:26b"
 temperature = 0.8  # Higher temperature for thinking models
 REPEAT_PENALTY = 1.15  # discourage the model from repeating the same phrase verbatim
 REPEAT_LAST_N = 256  # look further back when penalizing repeats (default is 64)
-NUM_PREDICT = 8192  # hard cap on tokens per generation - backstop against runaway/looping output
+# NOTE: deliberately no num_predict cap - write_file's tool-call JSON puts
+# `content` before `file_path`, so truncating a long generation mid-content
+# drops file_path entirely (Pydantic "field required" error). The mid-stream
+# repetition-loop detector in core/orchestrator.py is the real defense
+# against runaway generation; it's semantically aware and doesn't truncate
+# legitimately long file content.
 
 MAX_WORKERS = 3
 REQUEST_TIMEOUT = 180
@@ -481,7 +486,6 @@ def get_cached_llm(model_name: str):
             temperature=temperature,
             repeat_penalty=REPEAT_PENALTY,
             repeat_last_n=REPEAT_LAST_N,
-            num_predict=NUM_PREDICT,
         )
     else:
         logging.getLogger(__name__).debug(
