@@ -4,6 +4,38 @@ NEVER MARK A ITEM AS COMPLETE TILL YOU HAVE TESTED IT FULLY AS PER CLAUDE.md tes
 
 ---
 
+## Session 2026-09-19 (part 6): Standardized on one Cursor-style diff-first workflow
+
+User was confused why there were 3 different ways to get code written (chat-only,
+chat+write_file, editor Edit/Apply) and asked to make it work like Cursor IDE
+instead. Websearched current (2026) Cursor behavior to confirm the actual model
+rather than rely on training-data assumptions: Cursor's Cmd+K inline edit AND its
+chat "Apply" button both funnel into the same paradigm - a reviewable diff shown
+in the real editor that you explicitly accept, never a silent write.
+Source: https://www.deployhq.com/guides/cursor
+
+- [x] Diagnosed that our `write_file` tool was the odd one out: it does a blind
+  overwrite (a chat text "permission?" question, no visual diff, no per-hunk
+  review) - not Cursor-like. Continue's chat "Apply" button (fixed in the
+  previous session to route through `direct_completion`) already gives the real
+  Cursor-equivalent: a genuine inline diff you accept/reject in the editor.
+- [x] **FIXED**: added a system-prompt rule in `core/orchestrator.py` - when the
+  user asks to change code in an EXISTING file, the agent must reply with the
+  updated code as a plain chat code block (for the user to Apply) instead of
+  calling `write_file`. Reserved `write_file` only for explicitly-confirmed
+  brand-new file creation where no diff review is needed.
+- [x] **TESTED**: created a real test file `calc.py` with an `add()` function,
+  asked the agent (via `core.orchestrate_request`, live) to "add a subtract
+  function" to it. It called `read_system_file` to see the existing content,
+  then replied with the full updated file as a chat code block - `write_file`
+  was NOT invoked, and the file on disk was confirmed unchanged afterward.
+  **PASS**
+- Net result: exactly two entry points now, both diff-first like Cursor -
+  (1) chat + Continue's Apply button, (2) Continue's inline Edit (Cmd/Ctrl+I) -
+  and the agent no longer silently overwrites existing files from chat.
+
+---
+
 ## Session 2026-09-19 (part 5): Continue's inline Edit/Apply were broken - added a direct-completion path
 
 User asked whether the agent produces code directly in the VS Code window "as if
