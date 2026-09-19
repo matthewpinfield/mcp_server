@@ -4,6 +4,53 @@ NEVER MARK A ITEM AS COMPLETE TILL YOU HAVE TESTED IT FULLY AS PER CLAUDE.md tes
 
 ---
 
+## Session 2026-09-19 (part 14): Same write_file crash recurred with a different garbling pattern - fixed at the systemic level
+
+The exact "field required" write_file crash recurred, but this time the truncated
+content (`...settings.RAW`) did NOT contain the `file_path="..."` trailing pattern
+the previous fix targets.
+
+### Investigation
+- [x] Reproduced with a similarly large file request (comprehensive pydantic
+  settings module). Confirmed via `response_metadata` that generation
+  finished normally (`done_reason: stop`, not a length/timeout cutoff) but
+  produced NEITHER a tool call NOR content text on one attempt - all ~3300
+  tokens went into the (discarded) `thinking` field instead, via
+  `langchain_ollama`'s wrapper specifically.
+- [x] The SAME prompt via the raw `ollama` Python client (bypassing
+  `langchain_ollama` entirely) produced a perfectly well-formed tool call
+  every time. Ran 4 more trials through `langchain_ollama` afterward and all
+  4 succeeded correctly. **Conclusion: this class of failure is inherently
+  probabilistic/intermittent in `langchain_ollama`'s tool-call handling for
+  large generations** - not a single fixed pattern that can be pattern-matched
+  and recovered from (unlike the earlier "trailing file_path in content" case).
+- [x] Given failures can take unpredictable forms, chasing each specific
+  garbling variant is a losing game. Fixed at the systemic level instead.
+
+### Fix
+- [x] Found LangChain's own `BaseTool.run()` has a dedicated
+  `handle_validation_error` hook (distinct from `handle_tool_error`)
+  specifically for Pydantic `ValidationError` - when set, it converts what
+  would otherwise be a raised exception (killing the entire multi-step turn,
+  which is exactly what "An error occurred during execution: ..." was) into
+  a normal string "observation" fed back to the agent, which can then see
+  what went wrong and retry the call correctly within the SAME turn.
+- [x] Added `_report_validation_error()` as the default `handle_validation_error`
+  on the shared `AsyncTool` base class in `tools/base.py` - benefits all 28
+  tools automatically, not just `write_file`, since any tool could receive a
+  malformed call from an unreliable model.
+- [x] **TESTED**: a genuinely malformed `write_file` call (no file_path
+  anywhere, unrecoverable) now returns a graceful "Error: this tool call had
+  invalid arguments..." string instead of raising - confirmed via direct
+  `tool.run()` call, no exception propagates.
+- [x] **Regression-tested** the base-class change against a real multi-step
+  run (3-file project build + git_status + several follow-up tool calls
+  through genuine model confusion about sandboxing) - 74s, no crashes, no
+  raised exceptions anywhere, all legitimate write_file calls still
+  succeeded with correct file_path values throughout.
+
+---
+
 ## Session 2026-09-19 (part 13): Fixed write_file crash on large files (regression + a real deeper bug)
 
 User hit: `1 validation error for WriteFileSchema file_path Field required` while
