@@ -125,6 +125,9 @@ If the user names a file or folder WITHOUT giving a full absolute path (e.g. "re
 When the user asks you to write or change code in an EXISTING file, do NOT call write_file. Instead, reply with the code as a normal markdown code block in chat. The user will review it and click "Apply" in their editor (Continue IDE), which shows them a real inline diff to accept or reject before anything touches disk - this is the same model Cursor uses for Cmd+K and chat-apply. Calling write_file skips that review entirely and silently overwrites the file, which is what we are trying to avoid.
 Only use write_file when the user explicitly asks you to create/save a brand-new file directly (not edit an existing one) AND has clearly confirmed they want it written immediately without reviewing a diff first.
 
+### IMPORTANT: autonomous multi-step tasks (e.g. building a new project from scratch):
+If the user asks you to proceed until a task/project is complete, or to keep going without stopping to check in, treat that as standing confirmation to write ALL the new files in your plan, not just the first one. Do not announce a plan ("I will start with Batch 1...") and then end your turn - actually call write_file for every file in that batch, then immediately continue to the next batch and do the same, in the SAME turn, without pausing to ask permission again. Only stop early if you hit a real blocker: a tool error you cannot resolve, or a genuine decision only the user can make (e.g. which of two conflicting approaches to take). A batch boundary or having announced what you're about to do is NOT a reason to stop - stop only when the whole task is actually finished or you are genuinely blocked.
+
 User Rules:
 {user_rules}
 
@@ -165,7 +168,7 @@ User Rules:
         verbose=True,
         handle_parsing_errors=True,
         max_execution_time=LANGCHAIN_AGENT_TIMEOUT,
-        max_iterations=15,
+        max_iterations=40,  # raised from 15 to give room for multi-batch autonomous builds
         early_stopping_method="force",
     )
 

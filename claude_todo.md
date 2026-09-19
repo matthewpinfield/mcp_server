@@ -4,6 +4,50 @@ NEVER MARK A ITEM AS COMPLETE TILL YOU HAVE TESTED IT FULLY AS PER CLAUDE.md tes
 
 ---
 
+## Session 2026-09-19 (part 10): Agent stopped after one batch instead of running autonomously
+
+User asked the agent to "proceed until the project is complete" (Claude-Code/Cursor-Composer
+style autonomous run) while scaffolding a new project. It announced "Batch 1: ...
+I will start with Batch 1." then ended its turn instead of continuing through
+all planned files.
+
+- [x] Checked the server log for the actual turn: only 3 LLM round-trips
+  happened (well under `max_iterations=15`, nowhere near the 240s
+  `max_execution_time`). Confirmed this was the model choosing to stop, not
+  any hard limit being hit - a pure prompting gap. Nothing in the system
+  prompt told it to keep working across multiple batches in one turn.
+- [x] **FIXED**: added an explicit "autonomous multi-step tasks" instruction
+  to the system prompt in `core/orchestrator.py` - when told to proceed until
+  done, treat that as standing confirmation for ALL planned files, keep
+  calling `write_file` batch after batch in the same turn, and only stop for
+  a genuine blocker (tool error, real ambiguity), not just because a batch
+  ended or a plan was announced.
+- [x] Also raised the structural ceiling so a real multi-file build has room
+  to actually run that long: `max_iterations` 15 -> 40 in
+  `core/orchestrator.py`, `LANGCHAIN_AGENT_TIMEOUT` 240s -> 900s in
+  `config.py` (also used as the raw Ollama HTTP client timeout - raising it
+  only permits longer calls, doesn't slow down fast ones).
+- [x] **TESTED** live via `core.orchestrate_request`: asked it to create a
+  3-file project (a.py/b.py/c.py with cross-imports) and "proceed until
+  complete, do not stop to check in between files." It called `write_file`
+  three times back-to-back in ONE turn (6.1s total), no stopping in between.
+  Ran the generated `c.py` afterward - correct output
+  (`add(2,3)=5`, `subtract(5,2)=3`), confirming the generated code was
+  actually functionally correct, not just present. **PASS**
+
+### Separate, still-open investigation: does Continue tell us the workspace folder?
+User asked why the agent doesn't seem to know the currently-open VS Code/Continue
+workspace folder automatically. Our server is a standalone backend with zero
+access to VS Code's own APIs - it can only know the workspace if Continue
+explicitly includes it in the API request. Added TEMPORARY diagnostic logging
+to `api/chat.py` (`chat_proxy`) dumping the top-level request body keys and
+headers, to see live whether Continue sends any workspace/folder field by
+default. **NOT YET COMMITTED** - waiting on the user to send a live test
+message so the log can be inspected, then this diagnostic logging should be
+removed (or replaced with a real fix) before committing.
+
+---
+
 ## OPEN - NOT YET ACTIONED: 37 Dependabot vulnerabilities (3 critical, 15 high, 16 moderate, 3 low)
 
 User asked to hold off acting on this. Findings so far, for whoever picks it up:
