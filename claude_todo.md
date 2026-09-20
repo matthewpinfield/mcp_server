@@ -4,6 +4,54 @@ NEVER MARK A ITEM AS COMPLETE TILL YOU HAVE TESTED IT FULLY AS PER CLAUDE.md tes
 
 ---
 
+## Session 2026-09-20 (part 1): Root-caused the actual reason for repeated stalls - raised num_ctx
+
+User pushed back on "why doesn't the agent know it keeps stopping" given it has
+a whole memory system - correctly pointed out that `search_memory` (opt-in) is
+not the same as chat_history (automatic), and even when failure evidence is
+sitting in plain chat_history, having text in context doesn't mean the model
+treats it as an actionable signal.
+
+- [x] Investigated the deeper, structural cause behind this: confirmed we never
+  set `num_ctx` anywhere in our own code (`config.py`/`get_cached_llm`), so
+  every call relied on Ollama's bare default of 32768 - despite the model
+  itself supporting up to 262144. The real failing conversation from earlier
+  this session was ~44,000 tokens, already past that silent default ceiling.
+  When a prompt exceeds num_ctx, something has to be dropped to fit - a
+  strong, concrete explanation for the model "losing track", independent of
+  any inherent self-awareness limitation.
+- [x] Tested VRAM cost directly on the real GPU before picking a value:
+  32768->65536 costs only ~250MB extra, 131072 leaves just ~2.2GB free
+  (too thin, matches the earlier-diagnosed instability risk from thin
+  margins). Chose 65536 - covers real observed conversation lengths with a
+  safe ~3.6GB margin to spare.
+- [x] **Hit and diagnosed a real infra incident while testing**: issuing a
+  one-off request with a different `num_ctx` while other traffic was
+  hitting Ollama at the old default caused a genuine livelock - Ollama
+  stuck indefinitely in a "Stopping..." state, unable to cleanly reload.
+  Traced to a stray leftover curl process and killed it to recover. This
+  is exactly the same class of problem as the earlier model-swap VRAM
+  thrashing, but for context-size mismatches instead of model mismatches -
+  directly informed the fix below.
+- [x] **FIXED**: added `NUM_CTX = 65536` to `config.py`, wired into
+  `get_cached_llm()` (the single shared factory used by the main agent,
+  web search, and direct_completion/Edit-Apply - fixing it there covers
+  all three consistently) AND into `summary_worker.py`'s separate raw
+  Ollama call, so every call site in the whole system requests the exact
+  same context size. Inconsistency here would silently reintroduce the
+  same reload-thrashing/livelock risk just discovered.
+- [x] **TESTED**: confirmed via `ollama ps` that context stays at 65536
+  consistently across a main-agent call followed by a summary-worker call
+  (previously two different code paths, now provably non-conflicting).
+  Reconstructed a real ~51,800-token conversation (doubling an actual
+  Continue session's real content, not synthetic filler) matching the
+  original failure's scale - ran 3 trials, all 3 succeeded with
+  substantial, coherent, real responses (5-6KB each). Zero "No response
+  generated" occurrences, versus the same scale of conversation reliably
+  failing before this fix.
+
+---
+
 ## Session 2026-09-19 (part 20): Fixed "import pytest could not be resolved" in iceMap
 
 User asked what pytest was, then reported the agent "could not manage" to fix an
