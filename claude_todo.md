@@ -4,6 +4,64 @@ NEVER MARK A ITEM AS COMPLETE TILL YOU HAVE TESTED IT FULLY AS PER CLAUDE.md tes
 
 ---
 
+## Session 2026-09-20 (part 2): Added run_project_script - real diagnostic execution, not sandboxed
+
+User pasted 2 real pytest failures from iceMap and asked what tools we could give
+the agent to help it debug them (`TypeError: 'GeoJSONPoint' object is not
+subscriptable`, `AttributeError: 'numpy.ndarray' object has no attribute 'get'`).
+
+### Diagnosis first (before building anything)
+- [x] Re-ran the tests directly - confirmed real progress (one of the two
+  original failures was already fixed since the user's paste; a NEW,
+  different failure had appeared in its place). Got full tracebacks for the
+  current 2 failures:
+  - `test_ingestion.py:57` - the TEST itself is wrong: `saved_doc.location["coordinates"]`
+    uses dict-style subscript access on a Pydantic `BaseModel`
+    (`GeoJSONPoint`), which doesn't support `__getitem__`. Should be
+    `.coordinates`.
+  - `test_processing.py:23` - a genuine missing implementation:
+    `TilingEngine.create_tiles` never normalizes/casts tile values into the
+    `[0, 255]` uint8 range the test expects.
+- [x] Confirmed both were already fully diagnosable from `build_command`'s
+  existing test output (no truncation on our side - `capture_output=True`
+  captures everything) - so for these two specific bugs there wasn't
+  actually a missing-information gap.
+
+### The real, separate gap
+- [x] Identified a genuine missing capability regardless: no tool lets the
+  agent run a diagnostic script with real access to a project's own venv
+  and modules. `execute_code` is deliberately sandboxed away from the real
+  filesystem (a boundary set up earlier this session on purpose), so it
+  can't `import` a project's actual classes to inspect real runtime
+  behavior - exactly the "let me just print the type real quick" step a
+  human developer would reach for on a type-mismatch bug.
+- [x] Added `run_project_script` (`tools/development.py`): runs a Python
+  snippet via `subprocess` against the target project's own `.venv` (reusing
+  the same venv-detection logic as `build_command`, extracted to a shared
+  module-level `_get_venv_python_pip()`), writes it to a temp file inside
+  the project dir (for correct relative imports), captures stdout/stderr,
+  and cleans up afterward. Explicitly NOT sandboxed - full real filesystem
+  access, same trust level as `write_file`/`read_system_file`. Registered
+  in `tools/all_tools.py` - 30 tools total.
+- [x] **TESTED** directly against the real `GeoJSONPoint` bug: correctly
+  used iceMap's own venv, imported the REAL class, empirically confirmed
+  `has __getitem__: False` and the correct fix (`.coordinates`) - something
+  `execute_code` could never have done. Tested error handling (a script
+  that raises - clean traceback in stderr, correct exit code) and correct
+  per-project venv resolution (tested against both iceMap and this project,
+  each correctly used its own `.venv`). Confirmed temp script files are
+  cleaned up after every run, no litter left in either project.
+- [x] **TESTED end-to-end through the live agent** with the description's
+  first draft: the model did NOT spontaneously reach for the new tool
+  unprompted, needed an explicit nudge. Strengthened the description to
+  explicitly say "PREFER THIS TOOL whenever a test failure involves a
+  TypeError/AttributeError/wrong-type error" - retested with the same
+  unprompted phrasing, and this time it correctly reached for
+  `run_project_script` on its own, ran a real diagnostic script, and
+  correctly diagnosed the bug from actual runtime evidence.
+
+---
+
 ## Session 2026-09-20 (part 1): Root-caused the actual reason for repeated stalls - raised num_ctx
 
 User pushed back on "why doesn't the agent know it keeps stopping" given it has

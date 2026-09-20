@@ -46,6 +46,28 @@ class DateTimeSchema(BaseModel):
     pass  # No parameters needed
 
 
+class RunProjectScriptSchema(BaseModel):
+    code: str = Field(description="Python code to run, with real access to the project's own venv and modules")
+    directory: str = Field(description="Project directory (its .venv is used if one exists)", default=".")
+    timeout: int = Field(default=30, description="Timeout in seconds")
+
+
+def _get_venv_python_pip(project_path: Path):
+    """
+    Prefer an existing project-local .venv/venv over the bare system
+    python/pip, so installs and runs land in the right isolated
+    environment instead of leaking into whatever environment this
+    server's own process happens to be running under.
+    """
+    for venv_name in [".venv", "venv"]:
+        venv_dir = project_path / venv_name
+        python_exe = venv_dir / "bin" / "python"
+        pip_exe = venv_dir / "bin" / "pip"
+        if python_exe.exists() and pip_exe.exists():
+            return str(python_exe), str(pip_exe)
+    return "python3", "pip"
+
+
 # ===== TOOL CLASSES =====
 
 
@@ -151,19 +173,7 @@ class LangchainBuildCommandTool(AsyncTool):
         return None
 
     def _get_venv_python_pip(self, project_path: Path):
-        """
-        Prefer an existing project-local .venv/venv over the bare system
-        python/pip, so installs and runs land in the right isolated
-        environment instead of leaking into whatever environment this
-        server's own process happens to be running under.
-        """
-        for venv_name in [".venv", "venv"]:
-            venv_dir = project_path / venv_name
-            python_exe = venv_dir / "bin" / "python"
-            pip_exe = venv_dir / "bin" / "pip"
-            if python_exe.exists() and pip_exe.exists():
-                return str(python_exe), str(pip_exe)
-        return "python3", "pip"
+        return _get_venv_python_pip(project_path)
 
     def _execute_build_command(
         self,
@@ -346,6 +356,64 @@ class LangchainBuildCommandTool(AsyncTool):
         except FileNotFoundError as e:
             return f"❌ **Tool Not Found**: {e}. Make sure required tools are installed and in PATH."
         except Exception as e:
+            return f"❌ **Error**: {str(e)}"
+
+
+class LangchainRunProjectScriptTool(AsyncTool):
+    name: str = "run_project_script"
+    description: str = (
+        "Run a short Python snippet with REAL access to a project's own virtual "
+        "environment and installed packages/modules - e.g. `from src.foo import Bar; "
+        "print(type(x), x)` to inspect what a real object actually is at runtime. "
+        "Unlike execute_code (which is fully sandboxed/isolated from the real "
+        "filesystem), this runs directly against the real project, using its .venv "
+        "if one exists. PREFER THIS TOOL whenever a test failure or bug involves a "
+        "TypeError, AttributeError, or any 'wrong type/shape of object' error - write "
+        "a quick script that imports the real class/function and reproduces the exact "
+        "call, instead of guessing the cause from reading source code alone. Also use "
+        "it to verify a fix actually works before proposing it."
+    )
+    args_schema: Type[BaseModel] = RunProjectScriptSchema
+
+    def _run(self, code: str, directory: str = ".", timeout: int = 30) -> str:
+        import tempfile
+
+        try:
+            project_path = Path(directory).resolve()
+            if not project_path.exists():
+                return f"Directory does not exist: {directory}"
+
+            python_exe, _ = _get_venv_python_pip(project_path)
+            logger.info(f"Run Project Script: {len(code)} chars, cwd={project_path}, python={python_exe}")
+
+            with tempfile.NamedTemporaryFile(
+                mode="w", suffix=".py", dir=project_path, delete=False, encoding="utf-8"
+            ) as f:
+                f.write(code)
+                script_path = f.name
+
+            try:
+                result = subprocess.run(
+                    [python_exe, script_path],
+                    cwd=project_path,
+                    capture_output=True,
+                    text=True,
+                    timeout=timeout,
+                )
+            finally:
+                Path(script_path).unlink(missing_ok=True)
+
+            response = f"**Ran with**: `{python_exe}`\nExit Code: {result.returncode}\n\n"
+            if result.stdout:
+                response += f"**stdout**:\n```\n{result.stdout}\n```\n\n"
+            if result.stderr:
+                response += f"**stderr**:\n```\n{result.stderr}\n```\n\n"
+            return response
+
+        except subprocess.TimeoutExpired:
+            return f"❌ **Timeout**: script timed out after {timeout}s"
+        except Exception as e:
+            logger.error(f"Run Project Script error: {e}")
             return f"❌ **Error**: {str(e)}"
 
 

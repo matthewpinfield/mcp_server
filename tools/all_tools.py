@@ -20,6 +20,7 @@ from .development import (
     LangchainBuildCommandTool,
     LangchainDateTimeTool,
     LangchainPackageSearchTool,
+    LangchainRunProjectScriptTool,
 )
 
 # Git Tools
@@ -86,6 +87,7 @@ __all__ = [
     "LangchainBuildCommandTool",
     "LangchainPackageSearchTool",
     "LangchainDateTimeTool",
+    "LangchainRunProjectScriptTool",
     # Sandbox Tools
     "MultiLanguageSandboxTool",
     "SandboxStatsTool",
@@ -123,6 +125,7 @@ SHARED_TOOLS = [
     LangchainSearchFileContentsTool(),
     # Development Tools
     LangchainBuildCommandTool(), LangchainPackageSearchTool(), LangchainDateTimeTool(),
+    LangchainRunProjectScriptTool(),
     # Sandbox Tools
     MultiLanguageSandboxTool(), SandboxStatsTool(),
     # Web Tools
