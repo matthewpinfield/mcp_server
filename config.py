@@ -16,6 +16,16 @@ DEFAULT_MODEL = "gemma4:26b"
 temperature = 0.8  # Higher temperature for thinking models
 REPEAT_PENALTY = 1.15  # discourage the model from repeating the same phrase verbatim
 REPEAT_LAST_N = 256  # look further back when penalizing repeats (default is 64)
+# Ollama's own default context for this model is 32768, well below what a
+# real long working session needs (measured one real Continue conversation
+# at ~44,000 tokens - well past that default, meaning Ollama silently drops
+# something to fit, which is a likely contributor to the model "forgetting"
+# things or losing its own system-prompt instructions on long sessions).
+# The model supports up to 262144; tested VRAM cost on this 24GB card:
+# 32768->65536 costs only ~250MB more, 131072 leaves just ~2.2GB free (too
+# thin, matches the earlier-diagnosed instability risk from thin margins).
+# 65536 covers real observed conversation lengths with a safe ~3.6GB to spare.
+NUM_CTX = 65536
 # NOTE: deliberately no num_predict cap - write_file's tool-call JSON puts
 # `content` before `file_path`, so truncating a long generation mid-content
 # drops file_path entirely (Pydantic "field required" error). The mid-stream
@@ -486,6 +496,7 @@ def get_cached_llm(model_name: str):
             temperature=temperature,
             repeat_penalty=REPEAT_PENALTY,
             repeat_last_n=REPEAT_LAST_N,
+            num_ctx=NUM_CTX,
         )
     else:
         logging.getLogger(__name__).debug(
