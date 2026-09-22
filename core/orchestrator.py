@@ -10,7 +10,7 @@ import re
 import uuid
 from typing import Dict, List, Optional, AsyncGenerator
 
-from langchain.agents import AgentExecutor, create_tool_calling_agent
+from langchain_classic.agents import AgentExecutor, create_tool_calling_agent
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 
 from config import LANGCHAIN_AGENT_TIMEOUT, DEFAULT_MODEL, get_cached_llm
