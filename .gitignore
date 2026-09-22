@@ -61,3 +61,7 @@ pubspec.lock
 *.key
 *.pem
 *.env
+
+# Internal session diary - useful for continuity between AI-agent sessions,
+# not meant for public eyes (real usernames, home paths, personal test data)
+claude_todo.md
