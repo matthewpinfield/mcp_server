@@ -50,42 +50,14 @@ rag_output.txt
 .packages
 pubspec.lock
 
-# Database files (keep structure but not data)
-rag/test_chroma/
-rag/backup_and_test/
-rag/venv/
-rag/lancedb_data/*.lance/data/
-rag/chroma_db_link
-
-# Large database files - runtime data, not source code
-docker_mongo_data/
-lancedb_data/
+# Database files - safety net in case any land in the repo; the real
+# Redis/MongoDB/LanceDB data all lives outside the repo, under
+# /mnt/caseSSD/mcp_server_data (see config.py)
 *.sqlite3
 *.db
-
-# MongoDB WiredTiger files
-WiredTiger*
-*.wt
-
-# Vector database files
 *.lance
-chroma.sqlite3
-
-# New Memory Implementation - LanceDB
-/tier3_memory_lancedb/
-/conversations_lancedb/
-conversation_memory.lance
-
-# NAS Storage
-/mnt/my_nas_mcp_share/
-
-# Memory system caches
-embedding_cache/
-memory_dumps/
-conversation_exports/
 
 # Sensitive files
 *.key
 *.pem
 *.env
-config.yaml
